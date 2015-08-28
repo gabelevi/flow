@@ -20,16 +20,25 @@ let default_config =
   let gig = 1024 * 1024 * 1024 in
   {global_size = gig; heap_size = 20 * gig}
 
+(* Allocated in C only. *)
+type handle = private {
+  h_fd: Unix.file_descr;
+  h_global_size: int;
+  h_heap_size: int;
+}
+
 (*****************************************************************************)
 (* Initializes the shared memory. Must be called before forking. *)
 (*****************************************************************************)
-external hh_shared_init: global_size:int -> heap_size:int -> unit
+external hh_shared_init: global_size:int -> heap_size:int -> handle
 = "hh_shared_init"
 
 let init config =
   hh_shared_init
     ~global_size:config.global_size
     ~heap_size:config.heap_size
+
+external connect : handle -> unit = "hh_worker_init"
 
 (*****************************************************************************)
 (* The shared memory garbage collector. It must be called every time we

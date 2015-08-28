@@ -1167,27 +1167,33 @@ let enforce_strict cx id constraints =
 (* created in the master process (see Server.preinit), populated and saved to
    ContextHeap. forked workers will have an empty replica from the master, but
    it's useless. should only be accessed through ContextHeap. *)
-let master_cx =
+let master_cx, restore_master_cx =
   let cx_ = ref None in
-  fun () -> match !cx_ with
-  | None ->
-    let cx = new_context Files_js.global_file_name Files_js.lib_module in
-    cx_ := Some cx;
-    cx
-  | Some cx -> cx
+  let master_cx () =
+    match !cx_ with
+    | None ->
+        let cx = new_context Files_js.global_file_name Files_js.lib_module in
+        cx_ := Some cx;
+        cx
+    | Some cx -> cx in
+  let restore_master_cx cx = cx_ := Some cx in
+  master_cx, restore_master_cx
 
 (* builtins is similarly created in the master (see Server.preinit) and
    replicated on fork. this is critical under the current somewhat fragile
    scheme, as all contexts agree on the id of this type var, and builtins are
    imported via this agreement between master_cx and others *)
-let builtins =
+let builtins, restore_builtins =
   let builtins_ = ref None in
-  fun () -> match !builtins_ with
-  | None ->
-    let b = mk_tvar (master_cx ()) (builtin_reason "module") in
-    builtins_ := Some b;
-    b
-  | Some b -> b
+  let builtins () =
+    match !builtins_ with
+    | None ->
+        let b = mk_tvar (master_cx ()) (builtin_reason "module") in
+        builtins_ := Some b;
+        b
+    | Some b -> b in
+  let restore_builtins b = builtins_ := Some b in
+  builtins, restore_builtins
 
 (* new contexts are prepared here, so we can install shared tvars *)
 let fresh_context ?(checked=false) ?(weak=false) ~file ~_module =

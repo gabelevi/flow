@@ -14,19 +14,13 @@
 (*****************************************************************************)
 open ServerEnv
 
-let make_genv options config watch_paths =
+let make_genv options config watch_paths handle =
+  let check_mode = ServerArgs.check_mode options in
   let root = ServerArgs.root options in
-  let check_mode   = ServerArgs.check_mode options in
-  let gc_control   = ServerConfig.gc_control config in
   Typing_deps.trace :=
     not check_mode || ServerArgs.convert options <> None ||
     ServerArgs.save_filename options <> None;
-  let nbr_procs = GlobalConfig.nbr_procs in
-  let workers =
-    if Sys.win32 then
-      None (* No parallelism on Windows yet, Work-in-progress *)
-    else
-      Some (Worker.make nbr_procs gc_control) in
+  let workers = ServerWorker.make options config handle in
   let dfind =
     if Sys.win32 || check_mode then
       None

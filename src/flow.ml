@@ -82,4 +82,5 @@ end = struct
 
 end
 
-let _ = FlowShell.main ()
+let () =
+  FlowShell.main ()

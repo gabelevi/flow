@@ -203,3 +203,6 @@ let close { channels = (ic, oc); _ } =
 let kill h =
   close h;
   Unix.kill h.pid Sys.sigkill
+
+let cast_in x = x
+let cast_out x = x

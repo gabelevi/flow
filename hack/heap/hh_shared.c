@@ -259,25 +259,47 @@ value hh_hash_slots() {
  */
 /*****************************************************************************/
 
-static void init_shared_globals(char* mem) {
-  size_t page_size = getpagesize();
-
 #ifdef _WIN32
-  if (!VirtualAlloc(mem,
-                    global_size_b + page_size +
-                      2 * DEP_SIZE_B + HASHTBL_SIZE_B,
-                    MEM_COMMIT, PAGE_READWRITE)) {
+
+static char *memory_map(HANDLE fd, size_t shared_mem_size) {
+  char *mem;
+  mem = MapViewOfFileEx(
+    fd,
+    FILE_MAP_ALL_ACCESS,
+    0, 0,
+    0,
+    (char *)SHARED_MEM_INIT);
+  if (mem != (char *)SHARED_MEM_INIT) {
     win32_maperr(GetLastError());
-    uerror("VirtualAlloc2", Nothing);
+    uerror("MapViewOfFileEx", Nothing);
   }
+  return mem;
+}
+
+#else
+
+static char *memory_map(int fd, size_t shared_mem_size) {
+  char *mem;
+  /* MAP_NORESERVE is because we want a lot more virtual memory than what
+   * we are actually going to use.
+   */
+  int flags = MAP_SHARED | MAP_NORESERVE | MAP_FIXED;
+  int prot  = PROT_READ  | PROT_WRITE;
+  mem =
+    (char*)mmap((void*)SHARED_MEM_INIT, shared_mem_size, prot,
+                flags, fd, 0);
+  if(mem == MAP_FAILED) {
+    printf("Error initializing: %s\n", strerror(errno));
+    exit(2);
+  }
+  return mem;
+}
 #endif
 
-  /* Global storage initialization:
-   * We store this at the start of the shared memory section as it never
-   * needs to get saved (always reset after each typechecking run) */
+static void define_globals(char * shared_mem) {
+  size_t page_size = getpagesize();
+  char *mem = shared_mem;
   global_storage = (value*)mem;
-  // Initial size is zero
-  global_storage[0] = 0;
   mem += global_size_b;
 
   /* BEGINNING OF THE SMALL OBJECTS PAGE
@@ -293,10 +315,7 @@ static void init_shared_globals(char* mem) {
 
   // The number of elements in the hashtable
   hcounter = (int*)(mem + CACHE_LINE_SIZE);
-  *hcounter = 0;
-
   counter = (uintptr_t*)(mem + 2*CACHE_LINE_SIZE);
-  *counter = early_counter + 1;
 
   mem += page_size;
   // Just checking that the page is large enough.
@@ -316,8 +335,29 @@ static void init_shared_globals(char* mem) {
 
   /* Heap */
   heap_init = mem;
-  *heap = mem;
+
 }
+
+static void init_shared_globals(char * mem) {
+
+#ifdef _WIN32
+  if (!VirtualAlloc(mem, heap_init - mem,
+                    MEM_COMMIT, PAGE_READWRITE)) {
+    win32_maperr(GetLastError());
+    uerror("VirtualAlloc2", Nothing);
+  }
+#endif
+
+  // Initial size is zero for global storage is zero
+  global_storage[0] = 0;
+  // Initialize the number of element in the table
+  *hcounter = 0;
+  *counter = early_counter + 1;
+  // Initialize top heap pointers
+  *heap = heap_init;
+
+}
+
 
 /*****************************************************************************/
 /* Sets CPU and IO priorities. */
@@ -362,6 +402,14 @@ static void set_priorities() {
 
 }
 
+/* The total size of the shared memory.  Most of it is going to remain
+ * virtual. */
+static size_t get_shared_mem_size() {
+  size_t page_size = getpagesize();
+  return (global_size_b + 2 * DEP_SIZE_B + HASHTBL_SIZE_B +
+          heap_size + page_size);
+}
+
 /*****************************************************************************/
 /* Must be called by the master BEFORE forking the workers! */
 /*****************************************************************************/
@@ -372,19 +420,12 @@ value hh_shared_init(
 ) {
 
   CAMLparam2(global_size_val, heap_size_val);
+  CAMLlocal1(connector);
 
   global_size_b = Long_val(global_size_val);
   heap_size = Long_val(heap_size_val);
 
-  char* shared_mem;
-
-  size_t page_size = getpagesize();
-
-  /* The total size of the shared memory.  Most of it is going to remain
-   * virtual. */
-  size_t shared_mem_size =
-    global_size_b + 2 * DEP_SIZE_B + HASHTBL_SIZE_B +
-    heap_size + page_size;
+  size_t shared_mem_size = get_shared_mem_size();
 
 #ifdef _WIN32
   /*
@@ -405,47 +446,52 @@ value hh_shared_init(
      amount of free space in memory (or in swap file).
 
   */
-  HANDLE handle = CreateFileMapping(
+  HANDLE fd = CreateFileMapping(
     INVALID_HANDLE_VALUE,
     NULL,
     PAGE_READWRITE | SEC_RESERVE,
     shared_mem_size >> 32, shared_mem_size & ((1ll << 32) - 1),
     NULL);
-  if (handle == NULL) {
+  if (fd == NULL) {
     win32_maperr(GetLastError());
     uerror("CreateFileMapping", Nothing);
   }
-  if (!SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)) {
+  if (!SetHandleInformation(fd, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)) {
     win32_maperr(GetLastError());
     uerror("SetHandleInformation", Nothing);
   }
-  shared_mem = MapViewOfFileEx(
-    handle,
-    FILE_MAP_ALL_ACCESS,
-    0, 0,
-    0,
-    (char *)SHARED_MEM_INIT);
-  if (shared_mem != (char *)SHARED_MEM_INIT) {
-    shared_mem = NULL;
-    win32_maperr(GetLastError());
-    uerror("MapViewOfFileEx", Nothing);
-  }
+
+  master_pid = 0;
+  my_pid = master_pid;
 
 #else /* _WIN32 */
 
-  /* MAP_NORESERVE is because we want a lot more virtual memory than what
-   * we are actually going to use.
-   */
-  int flags = MAP_SHARED | MAP_ANON | MAP_NORESERVE | MAP_FIXED;
-  int prot  = PROT_READ  | PROT_WRITE;
-
-  shared_mem =
-    (char*)mmap((void*)SHARED_MEM_INIT,  shared_mem_size, prot,
-                flags, 0, 0);
-  if(shared_mem == MAP_FAILED) {
+  char memname[255];
+  sprintf(memname, "/hh_server.%d", getpid());
+  int fd = shm_open(memname, O_CREAT | O_TRUNC | O_RDWR, 0666);
+  if (fd == -1) {
     printf("Error initializing: %s\n", strerror(errno));
     exit(2);
   }
+
+  /* Remove the 'named' link, the fd will be inherited by
+     'spawned' process. */
+  if(shm_unlink(memname) == -1) {
+    uerror("shm_unlink", Nothing);
+  }
+
+  if(ftruncate(fd, shared_mem_size) == -1) {
+    uerror("ftruncate", Nothing);
+  }
+
+  // Keeping the pids around to make asserts.
+  master_pid = getpid();
+  my_pid = master_pid;
+
+#endif /* _WIN32 */
+
+  char* shared_mem = memory_map(fd, shared_mem_size);
+  define_globals(shared_mem);
 
 #ifdef MADV_DONTDUMP
   // We are unlikely to get much useful information out of the shared heap in
@@ -455,17 +501,9 @@ value hh_shared_init(
   madvise(shared_mem, shared_mem_size, MADV_DONTDUMP);
 #endif
 
-  // Keeping the pids around to make asserts.
-  master_pid = getpid();
-  my_pid = master_pid;
-
-#endif /* _WIN32 */
-
-  char* bottom = shared_mem;
   init_shared_globals(shared_mem);
-
   // Checking that we did the maths correctly.
-  assert(*heap + heap_size == bottom + shared_mem_size);
+  assert(*heap + heap_size == shared_mem + shared_mem_size);
 
 #ifndef _WIN32
   // Uninstall ocaml's segfault handler. It's supposed to throw an exception on
@@ -481,7 +519,12 @@ value hh_shared_init(
 
   set_priorities();
 
-  CAMLreturn(Val_unit);
+  connector = caml_alloc_tuple(3);
+  Field(connector, 0) = Val_long(fd);
+  Field(connector, 1) = global_size_val;
+  Field(connector, 2) = heap_size_val;
+
+  CAMLreturn(connector);
 }
 
 #ifdef NO_LZ4
@@ -658,10 +701,20 @@ void hh_load(value in_filename) {
 #endif /* NO_LZ4 */
 
 /* Must be called by every worker before any operation is performed */
-void hh_worker_init() {
-#ifndef _WIN32
+value hh_worker_init(value connector) {
+  CAMLparam1(connector);
+  global_size_b = Long_val(Field(connector, 1));
+  heap_size = Long_val(Field(connector, 2));
+#ifdef _WIN32
+  HANDLE fd = (HANDLE)Long_val(Field(connector, 0));
+  my_pid = 1; // Trick
+#else
+  int fd = Long_val(Field(connector, 0));
   my_pid = getpid();
 #endif
+  char* shared_mem = memory_map(fd, get_shared_mem_size());
+  define_globals(shared_mem);
+  CAMLreturn(Val_unit);
 }
 
 /*****************************************************************************/

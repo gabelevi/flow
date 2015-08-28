@@ -44,3 +44,6 @@ val construct_path: string -> string list -> string
 val package_json: Path.t -> Utils.SSet.t
 
 val relative_path: string -> string -> string
+
+(**/**)
+val restore_lib_files: Utils.SSet.t -> unit

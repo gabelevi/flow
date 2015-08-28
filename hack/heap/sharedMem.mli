@@ -25,11 +25,23 @@ type config = {
 
 val default_config : config
 
+type handle = private {
+  h_fd: Unix.file_descr;
+  h_global_size: int;
+  h_heap_size: int;
+}
+
 (*****************************************************************************)
 (* Initializes the shared memory. Must be called before forking! *)
 (*****************************************************************************)
 
-val init: config -> unit
+val init: config -> handle
+
+(*****************************************************************************)
+(* Connect a slave to the shared heap *)
+(*****************************************************************************)
+
+val connect: handle -> unit
 
 (*****************************************************************************)
 (* The shared memory garbage collector. It must be called every time we

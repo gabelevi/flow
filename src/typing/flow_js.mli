@@ -142,3 +142,7 @@ module Autocomplete : sig
 
   val extract_members: context -> Type.t -> member_result
 end
+
+(**/**)
+val restore_master_cx: Constraint_js.context -> unit
+val restore_builtins: Constraint_js.Type.t_out -> unit

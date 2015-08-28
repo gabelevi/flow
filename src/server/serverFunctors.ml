@@ -199,7 +199,7 @@ end = struct
     let tmp_dir = Options.temp_dir options in
     FlowEventLogger.init_server root;
     Program.preinit ();
-    SharedMem.(init default_config);
+    let handle = SharedMem.(init default_config) in
     (* this is to transform SIGPIPE in an exception. A SIGPIPE can happen when
     * someone C-c the client.
     *)
@@ -208,7 +208,7 @@ end = struct
     PidLog.log ~reason:"main" (Unix.getpid());
     let watch_paths = root :: Program.get_watch_paths options in
     let genv =
-      ServerEnvBuild.make_genv ~multicore:true options watch_paths in
+      ServerEnvBuild.make_genv ~multicore:true options watch_paths handle in
     let env = ServerEnvBuild.make_env options in
     let program_init = create_program_init genv env in
     let is_check_mode = Options.is_check_mode options in

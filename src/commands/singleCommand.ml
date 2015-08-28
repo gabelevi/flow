@@ -111,7 +111,7 @@ let main all weak debug verbose verbose_indent json profile quiet module_
   if ! Sys.interactive
   then ()
   else
-    SharedMem.(init default_config);
+    let _handle = SharedMem.(init default_config) in
     Types_js.single_main [root] options
 
 let command = CommandSpec.command spec main

@@ -18,6 +18,12 @@ type prefix =
 let root = ref None
 let hhi = ref None
 
+type slave_state = string option * string option
+let save () = !root, !hhi
+let restore (saved_root, saved_hhi) =
+  root := saved_root;
+  hhi := saved_hhi
+
 let path_ref_of_prefix = function
   | Root -> root
   | Hhi -> hhi

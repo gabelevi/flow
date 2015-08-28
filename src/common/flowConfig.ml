@@ -598,3 +598,5 @@ let get_unsafe () =
   match !cache with
   | Some config -> config
   | none -> failwith "No config loaded"
+
+let restore config = cache := Some config

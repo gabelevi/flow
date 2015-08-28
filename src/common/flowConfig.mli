@@ -67,3 +67,6 @@ val is_included: config -> string -> bool
 
 (* true if a file path matches an exclude (ignore) entry in config *)
 val is_excluded: config -> string -> bool
+
+(**/**)
+val restore: config -> unit

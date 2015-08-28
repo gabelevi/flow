@@ -183,9 +183,11 @@ module Program : SERVER_PROGRAM =
         (List.map env.errorl Errors.to_absolute) stdout;
       match ServerArgs.convert genv.options with
       | None ->
+         Worker.killall ();
          exit (if env.errorl = [] then 0 else 1)
       | Some dirname ->
          ServerConvert.go genv env dirname;
+         Worker.killall ();
          exit 0
 
     let process_updates genv _env updates =
@@ -468,7 +470,7 @@ let daemon_main options =
         let fd = Handle.wrap_handle handle in
         Unix.set_close_on_exec fd);
   Program.preinit ();
-  SharedMem.init (ServerConfig.sharedmem_config config);
+  let handle = SharedMem.init (ServerConfig.sharedmem_config config) in
   (* this is to transform SIGPIPE in an exception. A SIGPIPE can happen when
    * someone C-c the client.
    *)
@@ -476,7 +478,7 @@ let daemon_main options =
   PidLog.init (ServerFiles.pids_file root);
   PidLog.log ~reason:"main" (Unix.getpid());
   let watch_paths = root :: Program.get_watch_paths options in
-  let genv = ServerEnvBuild.make_genv options config watch_paths in
+  let genv = ServerEnvBuild.make_genv options config watch_paths handle in
   let env = ServerEnvBuild.make_env options config in
   let program_init = create_program_init genv env in
   let is_check_mode = ServerArgs.check_mode genv.options in

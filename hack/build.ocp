@@ -16,8 +16,8 @@ if debug then {
   link += [ "-g" ]
 }
 
-if os_type = "linux" then {
-  cclib = [ "-lelf" ]
+if os_type = "Unix" then {
+  cclib += [ "-lrt" ]
 }
 
 if have_lz4 then {
@@ -403,11 +403,22 @@ begin library "hh-server-base"
   ]
 end
 
-begin library "hh-server"
+begin library "hh-server-worker"
   requires += [
     "hh-third-party" "hh-utils" "hh-typing"
     "hh-search"  "hh-stubs"  "hh-stubs-ai"
     "hh-socket"  "hh-dfind" "hh-server-base"
+  ]
+  files = [
+    "server/serverWorker.ml"
+  ]
+end
+
+begin library "hh-server"
+  requires += [
+    "hh-third-party" "hh-utils" "hh-typing"
+    "hh-search"  "hh-stubs"  "hh-stubs-ai"
+    "hh-socket"  "hh-dfind" "hh-server-base" "hh-server-worker"
   ]
   files = [
     "server/serverEnvBuild.ml"
@@ -478,7 +489,7 @@ begin library "hh-emitter"
 end
 
 begin library "hh-format"
-  requires += [ "hh-typing-base" ]
+  requires += [ "hh-typing-base" "hh-server-worker" ]
   files = [
     "stubs/formatEventLogger.ml"
     "format/format_hack.ml"
