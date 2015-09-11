@@ -468,7 +468,7 @@ value hh_shared_init(
 
   char memname[255];
   sprintf(memname, "/hh_server.%d", getpid());
-  int fd = shm_open(memname, O_CREAT | O_TRUNC | O_RDWR, 0666);
+  int fd = shm_open(memname, O_CREAT | O_RDWR, 0666);
   if (fd == -1) {
     printf("Error initializing: %s\n", strerror(errno));
     exit(2);
