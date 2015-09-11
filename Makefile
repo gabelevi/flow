@@ -102,7 +102,10 @@ FRAMEWORK_OPTS=$(foreach framework, $(FRAMEWORKS),-cclib -framework -cclib $(fra
 LINKER_FLAGS=$(NATIVE_OBJECT_FILES) $(NATIVE_LIB_OPTS) $(EXTRA_LIB_OPTS) $(FRAMEWORK_OPTS) $(SECTCREATE)
 
 
-all: build-flowlib-archive build-flow copy-flow-files
+all: print-git build-flowlib-archive build-flow copy-flow-files
+
+print-git:
+	git rev-parse HEAD
 
 clean:
 	ocamlbuild -clean
