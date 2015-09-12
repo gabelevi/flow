@@ -110,6 +110,7 @@ do
         then
             # default command is check with configurable --all
             $FLOW check . $all --strip-root --show-all-errors 1> $out_file 2> $err_file
+            echo $(tail -n10 /var/log/messages)
         else
             # otherwise, run specified flow command, then kill the server
 
