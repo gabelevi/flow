@@ -69,6 +69,9 @@ let establish_connection ~tmp_dir root =
     (match Sys_utils.realpath (Sys_utils.expanduser "/tmp") with
     | Some p -> Utils.prerr_endlinef "/tmp goes to %s" p
     | None -> Utils.prerr_endlinef "Realpath is failing for /tmp");
+    (match Sys_utils.realpath (Sys_utils.expanduser "/tmp/flow") with
+    | Some p -> Utils.prerr_endlinef "/tmp/flow goes to %s" p
+    | None -> Utils.prerr_endlinef "Realpath is failing for /tmp/flow");
     Utils.prerr_endlinef "Sock_name: %s %s" (FlowConfig.socket_file ~tmp_dir root) sock_name;
     let sockaddr =
       if Sys.win32 then
