@@ -45,27 +45,51 @@ let open_connection sockaddr =
   match SockMap.get sockaddr !connections with
   | Some conn -> conn
   | None ->
-      let conn = Unix.open_connection sockaddr in
-      connections := SockMap.add sockaddr conn !connections;
-      (* It's important that we only write this once per connection *)
-      Printf.fprintf (snd conn) "%s\n%!" Build_id.build_id_ohai;
-      conn
+      try 
+        prerr_endline "About to open the connection";
+        let conn = Unix.open_connection sockaddr in
+        connections := SockMap.add sockaddr conn !connections;
+        (* It's important that we only write this once per connection *)
+        prerr_endline "About to write to thingy";
+        Printf.fprintf (snd conn) "%s\n%!" Build_id.build_id_ohai;
+        conn
+      with e ->
+        Utils.prerr_endlinef "Open connection! %s" (Printexc.to_string e);
+        (match SockMap.get sockaddr !connections with
+        | None -> ()
+        | Some (ic, _) ->
+            Unix.shutdown_connection ic;
+            close_in_noerr ic);
+        raise e
+
 
 let establish_connection ~tmp_dir root =
-  let sock_name = Socket.get_path (FlowConfig.socket_file ~tmp_dir root) in
-  let sockaddr =
-    if Sys.win32 then
-      let ic = open_in_bin sock_name in
-      let port = input_binary_int ic in
-      close_in ic;
-      Unix.(ADDR_INET (inet_addr_loopback, port))
-    else
-      Unix.ADDR_UNIX sock_name in
-  Result.Ok (open_connection sockaddr)
+  try 
+    let sock_name = Socket.get_path (FlowConfig.socket_file ~tmp_dir root) in
+    (match Sys_utils.realpath (Sys_utils.expanduser "/tmp") with
+    | Some p -> Utils.prerr_endlinef "/tmp goes to %s" p
+    | None -> Utils.prerr_endlinef "Realpath is failing for /tmp");
+    Utils.prerr_endlinef "Sock_name: %s %s" (FlowConfig.socket_file ~tmp_dir root) sock_name;
+    let sockaddr =
+      if Sys.win32 then
+        let ic = open_in_bin sock_name in
+        let port = input_binary_int ic in
+        close_in ic;
+        Unix.(ADDR_INET (inet_addr_loopback, port))
+      else
+        Unix.ADDR_UNIX sock_name in
+    Result.Ok (open_connection sockaddr)
+  with e ->
+    Utils.prerr_endlinef "Establish connection! %s" (Printexc.to_string e);
+    raise e
 
 let get_cstate (ic, oc) =
-  let cstate : ServerUtils.connection_state = Marshal.from_channel ic in
-  Result.Ok (ic, oc, cstate)
+  try 
+    let cstate : ServerUtils.connection_state = Marshal.from_channel ic in
+    Result.Ok (ic, oc, cstate)
+  with e ->
+    Utils.prerr_endlinef "Oh snap! %s" (Printexc.to_string e);
+    raise e
 
 let verify_cstate ic = function
   | ServerUtils.Connection_ok -> Result.Ok ()

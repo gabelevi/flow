@@ -51,12 +51,18 @@ use_implementation_files() {
   mv ws/test/client.js.ignored ws/test/client.js
 }
 
+ls -l /tmp
+readlink /tmp
+
 printf "======Start off with the .js files but without the .flow file======\n"
 "$FLOW" status --old-output-format .
 use_declaration_files
 "$FLOW" status --old-output-format .
 ignore_declaration_files
 "$FLOW" status --old-output-format .
+
+ls -l /tmp
+readlink /tmp
 
 printf "\n\n======Start off with the .js files and the .flow file======\n"
 "$FLOW" stop .
@@ -68,6 +74,9 @@ ignore_declaration_files
 "$FLOW" status --old-output-format .
 use_declaration_files
 "$FLOW" status --old-output-format .
+
+ls -l /tmp
+readlink /tmp
 
 printf "\n\n======Start off without the .js files and with the .flow file======\n"
 "$FLOW" stop .
