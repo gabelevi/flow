@@ -34,9 +34,14 @@ let temp_dir_name =
  *   the current directory (in absolute)
  *)
 let make path =
+  Utils.prerr_endlinef "make path %s" path;
   match Sys_utils.realpath (expanduser path) with
-  | Some path -> path
-  | None -> path (* assert false? *)
+  | Some path -> 
+      Utils.prerr_endlinef "It worked! %s" path;
+      path
+  | None -> 
+      prerr_endline "Failed :(";
+      path (* assert false? *)
 
 let to_string path = path
 

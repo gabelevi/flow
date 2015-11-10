@@ -10,5 +10,7 @@
 
 type t = string
 let dummy_path = ""
-let make x = x
+let make x = 
+  prerr_endline "Please no";
+  x
 let to_string x = x
