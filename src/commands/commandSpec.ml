@@ -17,6 +17,7 @@ module ArgSpec = struct
   type flag_arg_count =
   | No_Arg
   | Arg
+  | Arg_Two_Tuple
   | Arg_List
   | Arg_Rest
 
@@ -98,6 +99,14 @@ module ArgSpec = struct
     | None -> false
     );
     arg = No_Arg;
+  }
+
+  let two_tuple_of_strings = {
+    parse = (function
+    | Some [x; y] -> Some (x, y)
+    | _ -> None
+    );
+    arg = Arg_Two_Tuple;
   }
 
   let required arg_type = {
@@ -257,6 +266,24 @@ and parse_flag values spec arg args =
         parse values spec args
       end
 
+    | ArgSpec.Arg_Two_Tuple ->
+        begin match args with
+        | []
+        | _::[] ->
+          raise (Failed_to_parse (Utils_js.spf
+            "option %s needs two arguments."
+            arg
+          ))
+        | x::y::args ->
+          if is_arg x || is_arg y then
+            raise (Failed_to_parse (Utils_js.spf
+              "option %s needs two arguments."
+              arg
+            ));
+          let values = SMap.add arg [x; y] values in
+          parse values spec args
+        end
+
     | ArgSpec.Arg_List ->
       let (value_list, args) = consume_args args in
       let values = SMap.add arg value_list values in
@@ -276,6 +303,17 @@ and parse_anon values spec arg args =
   | Some (name, _, ArgSpec.Arg) ->
     let values = SMap.add name [arg] values in
     parse values spec args
+  | Some (name, _, ArgSpec.Arg_Two_Tuple) ->
+    begin match args with
+    | [] ->
+      raise (Failed_to_parse (Utils_js.spf
+        "option %s needs two arguments."
+        name 
+      ));
+    | arg2::args ->
+      let values = SMap.add name [arg; arg2] values in
+      parse values spec args
+    end
   | Some (name, _, ArgSpec.Arg_List) ->
     let (value_list, args) = consume_args (arg::args) in
     let values = SMap.add name value_list values in

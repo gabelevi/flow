@@ -29,6 +29,7 @@ end = struct
     GetDefCommand.command;
     GetImportersCommand.command;
     GetImportsCommand.command;
+    ConfigCommands.Config.command;
     ConfigCommands.Init.command;
     LsCommand.command;
     PortCommand.command;

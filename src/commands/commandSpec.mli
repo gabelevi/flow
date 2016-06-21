@@ -15,6 +15,7 @@ module ArgSpec : sig
   type flag_arg_count =
   | No_Arg
   | Arg
+  | Arg_Two_Tuple
   | Arg_List
   | Arg_Rest
 
@@ -35,6 +36,7 @@ module ArgSpec : sig
   val bool : bool option flag_t
   val int : int option flag_t
   val enum : string list -> string option flag_t
+  val two_tuple_of_strings : (string * string) option flag_t
 
   val required : 'a option flag_t -> 'a flag_t
   val optional : 'a option flag_t -> 'a option flag_t

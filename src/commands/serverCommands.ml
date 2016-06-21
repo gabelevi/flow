@@ -276,9 +276,9 @@ module OptionParser(Config : CONFIG) = struct
       opt_module_file_exts = FlowConfig.(
         flowconfig.options.Opts.module_file_exts
       );
-      opt_module_name_mappers = FlowConfig.(
-        flowconfig.options.Opts.module_name_mappers
-      );
+      opt_module_name_mappers = FlowConfig.(Opts.(
+        module_name_mappers flowconfig.options
+      ));
       opt_modules_are_use_strict = FlowConfig.(
         flowconfig.options.Opts.modules_are_use_strict
       );
@@ -299,9 +299,9 @@ module OptionParser(Config : CONFIG) = struct
       opt_max_workers;
       opt_ignores;
       opt_includes;
-      opt_suppress_comments = FlowConfig.(
-        flowconfig.options.Opts.suppress_comments
-      );
+      opt_suppress_comments = FlowConfig.(Opts.(
+        suppress_comments flowconfig.options
+      ));
       opt_suppress_types = FlowConfig.(
         flowconfig.options.Opts.suppress_types
       );

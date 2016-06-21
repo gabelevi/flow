@@ -50,8 +50,61 @@ module Init = struct
     let config = FlowConfig.init ~ignores ~includes ~libs ~options in
 
     let out = Sys_utils.open_out_no_fail file in
-    FlowConfig.write config out;
+    output_string out (FlowConfig.string_of_config config);
     Sys_utils.close_out_no_fail file out
+
+  let command = CommandSpec.command spec main
+end
+
+module Config = struct
+  let spec = {
+    CommandSpec.
+    name = "config";
+    doc = "Read from or write to the .flowconfig";
+    usage = Printf.sprintf
+      "Usage: %s config [COMMAND] \n"
+        CommandUtils.exe_name;
+    args = CommandSpec.ArgSpec.(
+      empty
+      |> flag "--get" (optional string)
+          ~doc:"Get the value for a given key"
+      |> flag "--add" (optional two_tuple_of_strings)
+          ~doc:"Adds a new line to the config without altering any \
+                existing values"
+      |> CommandUtils.from_flag
+      |> CommandUtils.root_flag
+      |> CommandUtils.json_flags
+    )
+  }
+
+  let do_get ~json flowconfig key =
+    output_string
+      stdout
+      (FlowConfig.string_of_config ~json ~key flowconfig)
+
+  let do_get_all ~json flowconfig =
+    output_string
+      stdout
+      (FlowConfig.string_of_config ~json flowconfig)
+
+  let do_add ~json flowconfig (key, value) =
+    flowconfig
+    |> FlowConfig.add ~key ~value
+    |> FlowConfig.string_of_config ~json
+    |> output_string stdout
+
+  let main get add from root json () =
+    FlowEventLogger.set_from from;
+    let root = CommandUtils.guess_root root in
+    let flowconfig = FlowConfig.get (Server_files_js.config_file root) in
+
+    match get with
+    | Some key -> do_get ~json flowconfig key
+    | None -> 
+        begin match add with
+        | Some (key, value) -> do_add ~json flowconfig (key, value)
+        | None -> do_get_all ~json flowconfig
+        end
 
   let command = CommandSpec.command spec main
 end

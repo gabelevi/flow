@@ -10,6 +10,10 @@
 
 module Opts : sig
   type moduleSystem = Node | Haste
+
+  type module_name_mapper
+  type regexp
+
   type t = {
     enable_const_params: bool;
     enable_unsafe_getters_and_setters: bool;
@@ -21,12 +25,12 @@ module Opts : sig
     facebook_ignore_fbt: bool;
     ignore_non_literal_requires: bool;
     moduleSystem: moduleSystem;
-    module_name_mappers: (Str.regexp * string) list;
+    module_name_mappers: module_name_mapper list;
     node_resolver_dirnames: string list;
     munge_underscores: bool;
     module_file_exts: SSet.t;
     modules_are_use_strict: bool;
-    suppress_comments: Str.regexp list;
+    suppress_comments: regexp list;
     suppress_types: SSet.t;
     traces: int;
     strip_root: bool;
@@ -41,6 +45,9 @@ module Opts : sig
     shm_hash_table_pow: int;
     version: string option;
   }
+
+  val module_name_mappers: t -> (Str.regexp * string) list
+  val suppress_comments: t -> Str.regexp list
 end
 
 type config = {
@@ -62,7 +69,10 @@ val init:
   libs: string list ->
   options: string list ->
   config
-val write: config -> out_channel -> unit
+
+val string_of_config: ?json:bool -> ?key:string -> config -> string
+
+val add: key:string -> value:string -> config -> config
 
 val version: string
 val project_root_token: Str.regexp

@@ -41,6 +41,12 @@ module Opts = struct
 
   type moduleSystem = Node | Haste
 
+  type regexp = Str.regexp * string
+
+  type module_name_mapper =
+    | NameMapper of regexp * string
+    | NameMapperExt of regexp * string
+
   type t = {
     enable_const_params: bool;
     enable_unsafe_getters_and_setters: bool;
@@ -52,12 +58,12 @@ module Opts = struct
     facebook_ignore_fbt: bool;
     ignore_non_literal_requires: bool;
     moduleSystem: moduleSystem;
-    module_name_mappers: (Str.regexp * string) list;
+    module_name_mappers: module_name_mapper list;
     node_resolver_dirnames: string list;
     munge_underscores: bool;
     module_file_exts: SSet.t;
     modules_are_use_strict: bool;
-    suppress_comments: Str.regexp list;
+    suppress_comments: regexp list;
     suppress_types: SSet.t;
     traces: int;
     strip_root: bool;
@@ -73,6 +79,14 @@ module Opts = struct
     version: string option;
   }
 
+  let module_name_mappers opts =
+    List.map (function
+      | NameMapper ((regexp, _), template) -> regexp, template
+      | NameMapperExt ((regexp, _), template) -> regexp, template)
+    opts.module_name_mappers
+
+  let suppress_comments opts = List.map fst opts.suppress_comments
+
   type _initializer =
     | USE_DEFAULT
     | INIT_FN of (t -> t)
@@ -80,7 +94,7 @@ module Opts = struct
   type option_flag =
     | ALLOW_DUPLICATE
 
-  type 'a option_definition = {
+  type option_definition = {
     (**
      * The _initializer gets set on the options object immediately before
      * parsing the *first* occurrence of the user-specified config option. This
@@ -93,8 +107,8 @@ module Opts = struct
      *)
     _initializer: _initializer;
     flags: option_flag list;
-    setter: (t -> 'a -> t);
-    optparser: (string -> 'a);
+    optprinter: (t -> string list);
+    optparser: (t -> string -> t);
   }
 
   let get_defined_opts (raw_opts, config) =
@@ -173,7 +187,7 @@ module Opts = struct
       let raw_options = List.fold_left parse_line SMap.empty lines in
       (raw_options, config)
 
-  let define_opt key definition (raw_opts, config) =
+  let parse_option key definition (raw_opts, config) =
     let new_raw_opts = SMap.remove key raw_opts in
 
     match SMap.get key raw_opts with
@@ -199,66 +213,109 @@ module Opts = struct
         );
 
         let config = List.fold_left (fun config (line_num, value_str) ->
-          let value =
-            try definition.optparser value_str
-            with UserError msg -> error line_num (
-              spf "Error parsing value for \"%s\". %s" key msg
-            )
-          in
-          try definition.setter config value
+          try definition.optparser config value_str
           with UserError msg -> error line_num (
-            spf "Error setting value for \"%s\". %s" key msg
+            spf "Error parsing value for \"%s\". %s" key msg
           )
         ) config values in
 
         (new_raw_opts, config)
 
-  let optparse_enum values str =
+  let pretty_print_option ~filter_defaults config key definition raw_opts =
+    if SMap.mem key raw_opts
+    then failwith (spf "Option %s appears more than once" key);
+
+    let actual_values = definition.optprinter config in
+    let default_values = definition.optprinter default_options in
+    if filter_defaults && actual_values = default_values
+    then raw_opts
+    else SMap.add key actual_values raw_opts
+
+  let optprint_enum values getter (config: t) =
+    let value = getter config in
+    let (key, _) =
+      try List.find (fun (_, enum) -> enum = value) values
+      with Not_found -> failwith "Can't find value in enum" in
+    [ key ]
+
+  let optparse_enum values setter (config: t) str : t =
     let values = List.fold_left map_add SMap.empty values in
-    match SMap.get str values with
+    let value = match SMap.get str values with
     | Some v -> v
     | None -> raise (UserError (
         spf "Unsupported value: \"%s\". Supported values are: %s"
           str
           (String.concat ", " (SMap.keys values))
-      ))
+    )) in
+    setter config value
 
-  let optparse_boolean = optparse_enum [
-    ("true", true);
-    ("false", false);
-  ]
+  let optprint_boolean, optparse_boolean =
+    let values = [
+      ("true", true);
+      ("false", false);
+    ] in
+    optprint_enum values, optparse_enum values
 
-  let optparse_uint str =
+  let optprint_uint getter config = [ string_of_int (getter config) ]
+
+  let optparse_uint setter config str =
     let v = int_of_string str in
-    if v < 0 then raise (UserError "Number cannot be negative!") else v
+    if v < 0
+    then raise (UserError "Number cannot be negative!")
+    else setter config v
 
-  let optparse_string str =
-    try Scanf.unescaped str
+  let optprint_string getter config = [ String.escaped (getter config) ]
+
+  let optparse_string setter config str =
+    try setter config (Scanf.unescaped str)
     with Scanf.Scan_failure reason -> raise (UserError (
       spf "Invalid ocaml string: %s" reason
     ))
 
-  let optparse_regexp str =
-    let unescaped = optparse_string str in
-    try Str.regexp unescaped
+  let optprint_sset getter config =
+    SSet.fold (fun str acc -> String.escaped str :: acc) (getter config) []
+
+  let optprint_list optprint getter config =
+    List.fold_left
+      (fun acc elem ->
+        let str_list = optprint (fun _ -> elem) config in
+        str_list @ acc)
+      []
+      (getter config)
+    |> List.rev
+
+  let optprint_regexp getter config = [String.escaped (snd (getter config))]
+
+  let optparse_regexp setter config str =
+    let unescaped = Scanf.unescaped str in
+    try setter config (Str.regexp unescaped, unescaped)
     with Failure reason -> raise (UserError (
       spf "Invalid regex \"%s\" (%s)" unescaped reason
     ))
 
-  let optparse_esproposal_feature_flag ?(allow_enable=false) =
+  let esproposal_feature_flag_values ~allow_enable =
     let values = [
       ("ignore", Options.ESPROPOSAL_IGNORE);
       ("warn", Options.ESPROPOSAL_WARN);
     ] in
-    let values =
-      if allow_enable
-      then ("enable", Options.ESPROPOSAL_ENABLE)::values
-      else values
-    in
-    optparse_enum values
+    if allow_enable
+    then ("enable", Options.ESPROPOSAL_ENABLE)::values
+    else values
 
-  let optparse_filepath str =
-    Path.make str
+  let optprint_esproposal_feature_flag ?(allow_enable=false) =
+    optprint_enum (esproposal_feature_flag_values ~allow_enable)
+
+  let optparse_esproposal_feature_flag ?(allow_enable=false) =
+    optparse_enum (esproposal_feature_flag_values ~allow_enable)
+
+  let optprint_option optprint getter config =
+    match getter config with
+    | None -> []
+    | Some opt -> optprint (fun _ -> opt) config
+
+  let optprint_filepath getter config = [ Path.to_string (getter config) ]
+
+  let optparse_filepath setter config str = setter config (Path.make str)
 end
 
 type config = {
@@ -271,54 +328,6 @@ type config = {
   (* config options *)
   options: Opts.t;
 }
-
-module Pp : sig
-  val config : out_channel -> config -> unit
-end = struct
-  open Printf
-
-  let section_header o section =
-    fprintf o "[%s]\n" section
-
-  let ignores o ignores =
-    List.iter (fun ex -> (fprintf o "%s\n" ex)) ignores
-
-  let includes o includes =
-    List.iter (fun inc -> (fprintf o "%s\n" inc)) includes
-
-  let libs o libs =
-    List.iter (fun lib -> (fprintf o "%s\n" lib)) libs
-
-  let options =
-    let opt o name value = fprintf o "%s=%s\n" name value
-
-    in let module_system = function
-      | Opts.Node -> "node"
-      | Opts.Haste -> "haste"
-
-    in fun o config -> Opts.(
-      let options = config.options in
-      if options.moduleSystem <> default_options.moduleSystem
-      then opt o "module.system" (module_system options.moduleSystem);
-      if options.all <> default_options.all
-      then opt o "all" (string_of_bool options.all);
-      if options.temp_dir <> default_options.temp_dir
-      then opt o "temp_dir" options.temp_dir
-    )
-
-  let config o config =
-    section_header o "ignore";
-    ignores o config.ignores;
-    fprintf o "\n";
-    section_header o "include";
-    includes o config.includes;
-    fprintf o "\n";
-    section_header o "libs";
-    libs o config.libs;
-    fprintf o "\n";
-    section_header o "options";
-    options o config
-end
 
 let empty_config = {
   ignores = [];
@@ -362,88 +371,90 @@ let parse_ignores config lines =
   let ignores = trim_lines lines in
   { config with ignores; }
 
-let parse_options config lines =
+let fold_definitions ~f ~init =
   let open Opts in
-  let options = parse config.options lines
-    |> define_opt "esproposal.class_instance_fields" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_esproposal_feature_flag ~allow_enable:true;
-      setter = (fun opts v -> {
-        opts with esproposal_class_instance_fields = v;
-      });
-    }
+  init
+  |> f "esproposal.class_instance_fields" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_esproposal_feature_flag ~allow_enable:true
+      (fun opts -> opts.esproposal_class_instance_fields);
+    optparser = optparse_esproposal_feature_flag ~allow_enable:true
+      (fun opts v -> { opts with esproposal_class_instance_fields = v; });
+  }
 
-    |> define_opt "esproposal.class_static_fields" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_esproposal_feature_flag ~allow_enable:true;
-      setter = (fun opts v -> {
-        opts with esproposal_class_static_fields = v;
-      });
-    }
+  |> f "esproposal.class_static_fields" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_esproposal_feature_flag ~allow_enable:true
+      (fun opts -> opts.esproposal_class_static_fields);
+    optparser = optparse_esproposal_feature_flag ~allow_enable:true
+      (fun opts v -> { opts with esproposal_class_static_fields = v; });
+  }
 
-    |> define_opt "esproposal.decorators" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_esproposal_feature_flag;
-      setter = (fun opts v -> {
-        opts with esproposal_decorators = v;
-      });
-    }
+  |> f "esproposal.decorators" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_esproposal_feature_flag
+      (fun opts -> opts.esproposal_decorators);
+    optparser = optparse_esproposal_feature_flag
+      (fun opts v -> { opts with esproposal_decorators = v; });
+  }
 
-    |> define_opt "esproposal.export_star_as" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_esproposal_feature_flag ~allow_enable:true;
-      setter = (fun opts v -> {
-        opts with esproposal_export_star_as = v;
-      });
-    }
+  |> f "esproposal.export_star_as" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_esproposal_feature_flag ~allow_enable:true
+      (fun opts -> opts.esproposal_export_star_as);
+    optparser = optparse_esproposal_feature_flag ~allow_enable:true
+      (fun opts v -> { opts with esproposal_export_star_as = v; });
+  }
 
-    |> define_opt "facebook.ignore_fbt" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_boolean;
-      setter = (fun opts v -> {
-        opts with facebook_ignore_fbt = v;
-      });
-    }
+  |> f "facebook.ignore_fbt" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_boolean
+      (fun opts -> opts.facebook_ignore_fbt);
+    optparser = optparse_boolean
+      (fun opts v -> { opts with facebook_ignore_fbt = v; });
+  }
 
-    |> define_opt "log.file" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_filepath;
-      setter = (fun opts v -> {
-        opts with log_file = Some v;
-      });
-    }
+  |> f "log.file" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_option optprint_filepath
+      (fun opts -> opts.log_file);
+    optparser = optparse_filepath
+      (fun opts v -> { opts with log_file = Some v; });
+  }
 
-    |> define_opt "max_header_tokens" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_uint;
-      setter = (fun opts v ->
-        {opts with max_header_tokens = v;}
-      );
-    }
+  |> f "max_header_tokens" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_uint
+      (fun opts -> opts.max_header_tokens);
+    optparser = optparse_uint
+      (fun opts max_header_tokens -> {opts with max_header_tokens;});
+  }
 
-    |> define_opt "module.ignore_non_literal_requires" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_boolean;
-      setter = (fun opts v ->
-        {opts with ignore_non_literal_requires = v;}
-      );
-    }
+  |> f "module.ignore_non_literal_requires" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_boolean
+      (fun opts -> opts.ignore_non_literal_requires);
+    optparser = optparse_boolean
+      (fun opts v -> {opts with ignore_non_literal_requires = v;});
+  }
 
-    |> define_opt "module.file_ext" {
-      _initializer = INIT_FN (fun opts -> {
-        opts with module_file_exts = SSet.empty;
-      });
-      flags = [ALLOW_DUPLICATE];
-      optparser = optparse_string;
-      setter = (fun opts v ->
+  |> f "module.file_ext" {
+    _initializer = INIT_FN (fun opts -> {
+      opts with module_file_exts = SSet.empty;
+    });
+    flags = [ALLOW_DUPLICATE];
+    optprinter = optprint_sset
+      (fun opts -> opts.module_file_exts);
+    optparser = optparse_string
+      (fun opts v ->
         if Utils.str_ends_with v Files_js.flow_ext
         then raise (Opts.UserError (
           "Cannot use file extension '" ^
@@ -455,227 +466,256 @@ let parse_options config lines =
         let module_file_exts = SSet.add v opts.module_file_exts in
         {opts with module_file_exts;}
       );
-    }
+  }
 
-    |> define_opt "module.name_mapper" {
-      _initializer = USE_DEFAULT;
-      flags = [ALLOW_DUPLICATE];
-      optparser = (fun str ->
-        let regexp_str = "^'\\([^']*\\)'[ \t]*->[ \t]*'\\([^']*\\)'$" in
-        let regexp = Str.regexp regexp_str in
-        (if not (Str.string_match regexp str 0) then
-          raise (Opts.UserError (
-            "Expected a mapping of form: " ^
-            "'single-quoted-string' -> 'single-quoted-string'"
-          ))
-        );
-
-        let pattern = Str.matched_group 1 str in
-        let template = Str.matched_group 2 str in
-
-        (Str.regexp pattern, template)
+  |> f "module.name_mapper" {
+    _initializer = USE_DEFAULT;
+    flags = [ALLOW_DUPLICATE];
+    optprinter = (fun opts ->
+      List.fold_left (fun acc elem -> match elem with
+        | NameMapper ((_, unescaped), template) ->
+            spf "%s -> %s" unescaped template :: acc
+        | _ -> acc) [] (List.rev opts.module_name_mappers)
+    );
+    optparser = (fun opts str ->
+      let regexp_str = "^'\\([^']*\\)'[ \t]*->[ \t]*'\\([^']*\\)'$" in
+      let regexp = Str.regexp regexp_str in
+      (if not (Str.string_match regexp str 0) then
+        raise (Opts.UserError (
+          "Expected a mapping of form: " ^
+          "'single-quoted-string' -> 'single-quoted-string'"
+        ))
       );
-      setter = (fun opts v ->
-        let module_name_mappers = v :: opts.module_name_mappers in
-        {opts with module_name_mappers;}
+
+      let pattern = Str.matched_group 1 str in
+      let template = Str.matched_group 2 str in
+
+      let v = NameMapper ((Str.regexp pattern, pattern), template) in
+      let module_name_mappers = v :: opts.module_name_mappers in
+      {opts with module_name_mappers;}
+    );
+  }
+
+  |> f "module.name_mapper.extension" {
+    _initializer = USE_DEFAULT;
+    flags = [ALLOW_DUPLICATE];
+
+    optprinter = (fun opts ->
+      List.fold_left (fun acc elem -> match elem with
+        | NameMapperExt ((_, unescaped), template) ->
+            spf "%s -> %s" unescaped template :: acc
+        | _ -> acc) [] (List.rev opts.module_name_mappers)
+    );
+
+    optparser = (fun opts str ->
+      let regexp_str = "^'\\([^']*\\)'[ \t]*->[ \t]*'\\([^']*\\)'$" in
+      let regexp = Str.regexp regexp_str in
+      (if not (Str.string_match regexp str 0) then
+        raise (Opts.UserError (
+          "Expected a mapping of form: " ^
+          "'single-quoted-string' -> 'single-quoted-string'"
+        ))
       );
-    }
 
-    |> define_opt "module.name_mapper.extension" {
-      _initializer = USE_DEFAULT;
-      flags = [ALLOW_DUPLICATE];
-      optparser = (fun str ->
-        let regexp_str = "^'\\([^']*\\)'[ \t]*->[ \t]*'\\([^']*\\)'$" in
-        let regexp = Str.regexp regexp_str in
-        (if not (Str.string_match regexp str 0) then
-          raise (Opts.UserError (
-            "Expected a mapping of form: " ^
-            "'single-quoted-string' -> 'single-quoted-string'"
-          ))
-        );
+      let file_ext = Str.matched_group 1 str in
+      let template = Str.matched_group 2 str in
 
-        let file_ext = Str.matched_group 1 str in
-        let template = Str.matched_group 2 str in
+      let regexp = "^\\(.*\\)\\." ^ (Str.quote file_ext) ^ "$" in
+      let v = NameMapperExt ((Str.regexp regexp, regexp), template) in
+      let module_name_mappers = v :: opts.module_name_mappers in
+      {opts with module_name_mappers;}
+    );
+  }
 
-        (Str.regexp ("^\\(.*\\)\\." ^ (Str.quote file_ext) ^ "$"), template)
-      );
-      setter = (fun opts v ->
-        let module_name_mappers = v :: opts.module_name_mappers in
-        {opts with module_name_mappers;}
-      );
-    }
+  |> f "module.system" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_enum [
+      ("node", Node);
+      ("haste", Haste);
+    ] (fun opts -> opts.moduleSystem);
+    optparser = optparse_enum [
+      ("node", Node);
+      ("haste", Haste);
+    ] (fun opts v -> { opts with moduleSystem = v; });
+  }
 
-    |> define_opt "module.system" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_enum [
-        ("node", Node);
-        ("haste", Haste);
-      ];
-      setter = (fun opts v -> {
-        opts with moduleSystem = v;
-      });
-    }
-
-    |> define_opt "module.system.node.resolve_dirname" {
-      _initializer = INIT_FN (fun opts -> {
-        opts with node_resolver_dirnames = [];
-      });
-      flags = [ALLOW_DUPLICATE];
-      optparser = optparse_string;
-      setter = (fun opts v ->
+  |> f "module.system.node.resolve_dirname" {
+    _initializer = INIT_FN (fun opts -> {
+      opts with node_resolver_dirnames = [];
+    });
+    flags = [ALLOW_DUPLICATE];
+    optprinter = optprint_list optprint_string
+      (fun opts -> opts.node_resolver_dirnames);
+    optparser = optparse_string
+      (fun opts v ->
         let node_resolver_dirnames = v :: opts.node_resolver_dirnames in
         {opts with node_resolver_dirnames;}
       );
-    }
+  }
 
-    |> define_opt "module.use_strict" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_boolean;
-      setter = (fun opts v ->
-        {opts with modules_are_use_strict = v;}
+  |> f "module.use_strict" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_boolean
+      (fun opts -> opts.modules_are_use_strict);
+    optparser = optparse_boolean
+      (fun opts v -> {opts with modules_are_use_strict = v;} );
+  }
+
+  |> f "munge_underscores" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_boolean
+      (fun opts -> opts.munge_underscores);
+    optparser = optparse_boolean
+      (fun opts v -> {opts with munge_underscores = v;} );
+  }
+
+  |> f "server.max_workers" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_uint
+      (fun opts -> opts.max_workers);
+    optparser = optparse_uint
+      (fun opts v -> {opts with max_workers = v;});
+  }
+
+  |> f "strip_root" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_boolean
+      (fun opts -> opts.strip_root);
+    optparser = optparse_boolean
+      (fun opts v -> {opts with strip_root = v;});
+  }
+
+  |> f "all" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_boolean
+      (fun opts -> opts.all);
+    optparser = optparse_boolean
+      (fun opts v -> {opts with all = v;});
+  }
+
+  |> f "suppress_comment" {
+    _initializer = USE_DEFAULT;
+    flags = [ALLOW_DUPLICATE];
+    optprinter = optprint_list optprint_regexp
+      (fun opts -> opts.suppress_comments);
+    optparser = optparse_regexp
+      (fun opts v ->
+        {opts with suppress_comments = v::(opts.suppress_comments);}
       );
-    }
+  }
 
-    |> define_opt "munge_underscores" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_boolean;
-      setter = (fun opts v ->
-        {opts with munge_underscores = v;}
-      );
-    }
-
-    |> define_opt "server.max_workers" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_uint;
-      setter = (fun opts v ->
-        {opts with max_workers = v;}
-      );
-    }
-
-    |> define_opt "strip_root" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_boolean;
-      setter = (fun opts v ->
-        {opts with strip_root = v;}
-      );
-    }
-
-    |> define_opt "all" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_boolean;
-      setter = (fun opts v ->
-        {opts with all = v;}
-      );
-    }
-
-    |> define_opt "suppress_comment" {
-      _initializer = USE_DEFAULT;
-      flags = [ALLOW_DUPLICATE];
-      optparser = optparse_regexp;
-      setter = (fun opts v -> {
-        opts with suppress_comments = v::(opts.suppress_comments);
-      });
-    }
-
-    |> define_opt "suppress_type" {
-      _initializer = USE_DEFAULT;
-      flags = [ALLOW_DUPLICATE];
-      optparser = optparse_string;
-      setter = (fun opts v -> {
+  |> f "suppress_type" {
+    _initializer = USE_DEFAULT;
+    flags = [ALLOW_DUPLICATE];
+    optprinter = optprint_sset
+      (fun opts -> opts.suppress_types);
+    optparser = optparse_string
+      (fun opts v -> {
         opts with suppress_types = SSet.add v opts.suppress_types;
       });
-    }
+  }
 
-    |> define_opt "temp_dir" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_string;
-      setter = (fun opts v -> {
-        opts with temp_dir = v;
-      });
-    }
+  |> f "temp_dir" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_string
+      (fun opts -> opts.temp_dir);
+    optparser = optparse_string
+      (fun opts v -> { opts with temp_dir = v; });
+  }
 
-    |> define_opt "sharedmemory.dirs" {
-      _initializer = USE_DEFAULT;
-      flags = [ALLOW_DUPLICATE];
-      optparser = optparse_string;
-      setter = (fun opts v -> {
-        opts with shm_dirs = opts.shm_dirs @ [v];
-      });
-    }
+  |> f "sharedmemory.dirs" {
+    _initializer = USE_DEFAULT;
+    flags = [ALLOW_DUPLICATE];
+    optprinter = optprint_list optprint_string
+      (fun opts -> opts.shm_dirs);
+    optparser = optparse_string
+      (fun opts v -> { opts with shm_dirs = opts.shm_dirs @ [v]; });
+  }
 
-    |> define_opt "sharedmemory.minimum_available" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_uint;
-      setter = (fun opts shm_min_avail -> {
-        opts with shm_min_avail;
-      });
-    }
+  |> f "sharedmemory.minimum_available" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_uint
+      (fun opts -> opts.shm_min_avail);
+    optparser = optparse_uint
+      (fun opts shm_min_avail -> { opts with shm_min_avail; });
+  }
 
-    |> define_opt "sharedmemory.dep_table_pow" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_uint;
-      setter = (fun opts shm_dep_table_pow -> {
-        opts with shm_dep_table_pow;
-      });
-    }
+  |> f "sharedmemory.dep_table_pow" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_uint
+      (fun opts -> opts.shm_dep_table_pow);
+    optparser = optparse_uint
+      (fun opts shm_dep_table_pow -> { opts with shm_dep_table_pow; });
+  }
 
-    |> define_opt "sharedmemory.hash_table_pow" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_uint;
-      setter = (fun opts shm_hash_table_pow -> {
-        opts with shm_hash_table_pow;
-      });
-    }
+  |> f "sharedmemory.hash_table_pow" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_uint
+      (fun opts -> opts.shm_hash_table_pow);
+    optparser = optparse_uint
+      (fun opts shm_hash_table_pow -> { opts with shm_hash_table_pow; });
+  }
 
-    |> define_opt "traces" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_uint;
-      setter = (fun opts v ->
-        {opts with traces = v;}
-      );
-    }
+  |> f "traces" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_uint
+      (fun opts -> opts.traces);
+    optparser = optparse_uint
+      (fun opts v -> {opts with traces = v;});
+  }
 
-    |> define_opt "unsafe.enable_getters_and_setters" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_boolean;
-      setter = (fun opts v ->
-        {opts with enable_unsafe_getters_and_setters = v;}
-      );
-    }
+  |> f "unsafe.enable_getters_and_setters" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_boolean
+      (fun opts -> opts.enable_unsafe_getters_and_setters);
+    optparser = optparse_boolean
+      (fun opts v -> {opts with enable_unsafe_getters_and_setters = v;});
+  }
 
-    |> define_opt "experimental.const_params" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_boolean;
-      setter = (fun opts v ->
-        {opts with enable_const_params = v;}
-      );
-    }
+  |> f "experimental.const_params" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_boolean
+      (fun opts -> opts.enable_const_params);
+    optparser = optparse_boolean
+      (fun opts v -> {opts with enable_const_params = v;});
+  }
 
-    |> define_opt "experimental.strict_type_args" {
-      _initializer = USE_DEFAULT;
-      flags = [];
-      optparser = optparse_boolean;
-      setter = (fun opts v ->
-        {opts with enforce_strict_type_args = v;}
-      );
-    }
+  |> f "experimental.strict_type_args" {
+    _initializer = USE_DEFAULT;
+    flags = [];
+    optprinter = optprint_boolean
+      (fun opts -> opts.enforce_strict_type_args);
+    optparser = optparse_boolean
+      (fun opts v -> {opts with enforce_strict_type_args = v;});
+  }
 
-    |> get_defined_opts
+let parse_options config lines =
+  let open Opts in
+  let options = fold_definitions 
+    ~f:parse_option
+    ~init:(Opts.parse config.options lines)
+  |> get_defined_opts
   in
   {config with options}
+
+let pretty_print_options ~filter_defaults config =
+  let open Opts in
+  fold_definitions 
+    ~f:(pretty_print_option ~filter_defaults config) 
+    ~init:SMap.empty
 
 let parse_version config lines =
   let potential_versions = lines
@@ -742,8 +782,6 @@ let init ~ignores ~includes ~libs ~options =
   let config = parse_libs config lib_lines in
   config
 
-let write config oc = Pp.config oc config
-
 (* We should restart every time the config changes, so it's cool to cache it *)
 let cache = ref None
 
@@ -758,3 +796,164 @@ let get filename =
       config
 
 let restore (filename, config) = cache := Some (filename, config)
+
+module Pp : sig
+  val flowconfig : json:bool -> config -> string
+  val excerpt : json:bool -> string -> config -> string
+  val options_lines : config -> string list
+end = struct
+  open Hh_json
+
+  type config_part =
+    | Sections of (string * config_part) list
+    | Lines of string list
+    | KeyValues of (string * string list) list
+    | Empty
+
+  let ignores ignores =
+    ("ignore", (Lines ignores))
+
+  let includes includes =
+    ("include", (Lines includes))
+
+  let libs libs =
+    ("lib", (Lines libs))
+
+  let options options =
+    let opts = pretty_print_options ~filter_defaults:true options
+    |> SMap.elements in
+    ("options", KeyValues opts)
+
+  let version version =
+    match version with
+    | None -> ("version", Empty)
+    | Some version -> ("version", Lines [version])
+
+  let is_nonempty_section = function
+  | (_, Empty)
+  | (_, Lines []) -> false
+  | _ -> true
+
+  let sections config =
+    Sections (
+      [
+        ignores config.ignores;
+        includes config.includes;
+        libs config.libs;
+        options config.options;
+        version config.options.Opts.version;
+      ]
+      |> List.filter is_nonempty_section
+    )
+    
+  let rec flowconfig_to_string config_part =
+    match config_part with
+    | Sections sections ->
+        sections
+        |> List.map (fun (name, config_part) ->
+          spf "[%s]\n%s" name (flowconfig_to_string config_part))
+        |> String.concat "\n\n"
+    | Lines values -> String.concat "\n" values
+    | KeyValues values ->
+        values
+        |> List.map (fun (key, values) -> 
+            values
+            |> List.map (fun value ->  spf "%s=%s" key value)
+            |> String.concat "\n")
+        |> String.concat "\n"
+    | Empty -> ""
+
+  let rec flowconfig_to_json config_part =
+    match config_part with
+    | Sections sections ->
+        JSON_Object (
+          List.map (fun (name, config_part) ->
+            (name, flowconfig_to_json config_part)
+          ) sections
+        )
+    | Lines values -> 
+        JSON_Array (List.map (fun value -> JSON_String value) values)
+    | KeyValues values ->
+        JSON_Object (
+          List.map (fun (key, values) -> 
+            (key, JSON_Array (List.map (fun v -> JSON_String v) values))
+          ) values
+        )
+    | Empty -> JSON_Null
+
+  let to_string ~json config_part =
+    if json 
+    then json_to_string (flowconfig_to_json config_part)
+    else (flowconfig_to_string config_part)^"\n"
+
+  let flowconfig ~json config =
+    to_string ~json (sections config)
+
+  let excerpt ~json key config =
+    begin match key with
+    | "ignore" -> Sections [ ignores config.ignores ]
+    | "include" -> Sections [ includes config.includes ]
+    | "libs" -> Sections [ libs config.libs ]
+    | "options" -> Sections [ options config.options ]
+    | "version" -> Sections [ version config.options.Opts.version]
+    | key -> 
+        let opts = pretty_print_options ~filter_defaults:false config.options in
+        begin match SMap.get key opts with
+        | None ->
+            FlowExitStatus.(exit
+              ~msg:(spf "Unknown option: %s" key)
+              Input_error)
+        | Some opts ->
+            KeyValues [(key, opts)]
+        end
+    end
+    |> to_string ~json 
+    
+  let options_lines config = 
+    pretty_print_options ~filter_defaults:true config.options
+    |> SMap.elements
+    |> List.map (fun (key, values) -> 
+        List.map (fun value -> spf "%s=%s" key value) values
+      )
+    |> List.concat
+end
+
+let string_of_config ?(json=false) ?key config =
+  match key with
+  | None -> Pp.flowconfig ~json config
+  | Some key -> Pp.excerpt ~json key config
+
+
+let add ~key ~value config =
+  let value = String.escaped value in
+  match key with
+  | "ignore" -> 
+      let ignores = config.ignores @ [ value ] in
+      { config with ignores; }
+  | "include" -> 
+      let includes = config.includes @ [ value ] in
+      { config with includes; }
+  | "libs" -> 
+      let libs = config.libs @ [ value ] in
+      { config with libs; }
+  | "options" ->
+      let option_lines = (Pp.options_lines config) @ [value] in
+      let option_lines = List.mapi (fun idx v -> (idx+1, v)) option_lines in
+      let config = { config with options = Opts.default_options } in
+      parse_options config option_lines 
+  | "version" ->
+      begin match config.options.Opts.version with
+      | None -> 
+          parse_version config [ (1, value) ]
+      | Some _ ->
+          FlowExitStatus.(exit
+            ~msg:"Cannot add version since a version is already specified. \
+                  Did you mean to use --replace-all?"
+            Input_error)
+      end
+  | key ->
+      let option_lines = 
+        (Pp.options_lines config) @ [ spf "%s=%s" key value ] in
+      let option_lines = List.mapi (fun idx v -> (idx+1, v)) option_lines in
+      let config = { config with options = Opts.default_options } in
+      parse_options config option_lines 
