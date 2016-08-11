@@ -397,3 +397,5 @@ let lstat path =
 let normalize_filename_dir_sep =
   let dir_sep_char = String.get Filename.dir_sep 0 in
   String.map (fun c -> if c = dir_sep_char then '/' else c)
+
+external set_close_on_exec_gabe: Unix.file_descr -> unit = "set_close_on_exec_gabe"

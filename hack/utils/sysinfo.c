@@ -81,3 +81,21 @@ value handle_of_pid_for_termination(value pid) {
   CAMLreturn(pid);
 #endif
 }
+
+value set_close_on_exec_gabe(value fd) {
+  CAMLparam1(fd);
+  printf("set_close_on_exec(%p) %p\n", *((void **)fd), Long_val(fd));
+
+  HANDLE stdout = GetStdHandle(STD_OUTPUT_HANDLE);
+  HANDLE stderr = GetStdHandle(STD_ERROR_HANDLE);
+
+  printf("stdout (%ld) = %ld\n", STD_OUTPUT_HANDLE, stdout);
+  printf("stdout (%ld) = %ld\n", STD_ERROR_HANDLE, stderr);
+
+  if (! SetHandleInformation(*((void **)fd), HANDLE_FLAG_INHERIT, 0)) {
+    printf("Oh poop: 0x%x\n", GetLastError());
+  } else {
+    printf("WTF IT WORKED?!\n");
+  }
+  CAMLreturn(Val_unit);
+}

@@ -386,8 +386,16 @@ end = struct
     let log_fd = open_log_file options in
     let config_file = Server_files_js.config_file root in
     (* Avoid leaking stdout and stderr to the server *)
-    Unix.(set_close_on_exec stdout);
-    Unix.(set_close_on_exec stderr);
+    Sys_utils.set_close_on_exec_gabe Unix.stdout;
+    Sys_utils.set_close_on_exec_gabe Unix.stderr;
+    (try Unix.(set_close_on_exec stdout)
+    with Unix.Unix_error (e, _, _) -> 
+    Utils.prerr_endlinef "Failed to close stdout: %s" (Unix.error_message e);
+    );
+    (try Unix.(set_close_on_exec stderr)
+    with Unix.Unix_error (e, _, _) -> 
+    Utils.prerr_endlinef "Failed to close stderr: %s" (Unix.error_message e);
+    );
     let {Daemon.pid; channels = (waiting_channel_ic, waiting_channel_oc)} =
       Daemon.spawn
         (log_fd, log_fd)
