@@ -8,24 +8,17 @@
  *
  *)
 
-#use "utils.ml"
-
 let get_flowlibs dir =
   Sys.readdir dir
   |> Array.fold_left (fun acc file ->
-     let contents = string_of_file (Filename.concat dir file) in
+     let contents = Sys_utils.read_file (Filename.concat dir file) in
      (file, contents)::acc
   ) []
 
 let generate_flowlibs_file out_file contents =
+  let compressed = LZ4.compress_string (Marshal.to_bytes contents []) in
   let oc = open_out out_file in
-  Printf.fprintf oc "let contents = [\n";
-  List.iter
-    (fun (filename, contents) ->
-      (* %S will escape stuff for an ocaml string *)
-      Printf.fprintf oc "  (%S, %S);\n" filename contents)
-    contents;
-  Printf.fprintf oc "]";
+  Printf.fprintf oc "let contents = %S;\n" compressed;
   close_out oc
 
 

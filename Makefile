@@ -95,6 +95,7 @@ MODULES=\
 NATIVE_C_FILES=\
   $(INOTIFY_STUBS)\
   $(FSNOTIFY_STUBS)\
+	src/flowlib/LZ4_stub.c\
   hack/heap/hh_shared.c\
   hack/utils/files.c\
   hack/utils/get_build_id.c\
@@ -234,8 +235,16 @@ hack/utils/get_build_id.gen.c: FORCE scripts/utils.ml scripts/gen_build_id.ml
 _build/hack/utils/get_build_id.gen.c: FORCE scripts/utils.ml scripts/gen_build_id.ml
 	ocaml -I scripts -w -3 unix.cma scripts/gen_build_id.ml $@
 
-src/flowlib/flowlib_contents.ml: scripts/gen_flowlibs.ml $(wildcard lib/*)
-	ocaml -I scripts -w -3 unix.cma ./scripts/gen_flowlibs.ml lib $@
+gen_flowlibs: $(BUILT_OBJECT_FILES)
+	rm -f _build/scripts/gen_flowlibs.o # Sometimes ocamlbuild is so dumb :(
+	ocamlbuild \
+		-use-ocamlfind -pkgs sedlex \
+		-no-links  $(INCLUDE_OPTS) $(LIB_OPTS) \
+		-lflags "$(LINKER_FLAGS)" \
+		scripts/gen_flowlibs.native
+
+src/flowlib/flowlib_contents.ml: gen_flowlibs $(wildcard lib/*)
+	_build/scripts/gen_flowlibs.native lib $@
 
 copy-flow-files: build-flow $(FILES_TO_COPY)
 	mkdir -p bin
@@ -288,7 +297,7 @@ js: $(BUILT_OBJECT_FILES)
 
 FORCE:
 
-.PHONY: all js build-flow build-flow-with-ocp build-flow-debug FORCE
+.PHONY: all js build-flow build-flow-with-ocp build-flow-debug gen_flowlibs FORCE
 
 # This rule runs if any .ml or .mli file has been touched. It recursively calls
 # ocamldep to figure out all the modules that we use to build src/flow.ml

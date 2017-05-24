@@ -13,4 +13,7 @@ let write_flowlib dir (filename, contents) =
   Sys_utils.write_file ~file contents
 
 let extract_flowlib dir =
-  List.iter (write_flowlib dir) Flowlib_contents.contents
+  Flowlib_contents.contents
+  |> LZ4.decompress_string
+  |> (fun (data: string): (string * string) list -> Marshal.from_bytes data 0)
+  |> List.iter (write_flowlib dir)
