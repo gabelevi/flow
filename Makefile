@@ -23,39 +23,30 @@ endif
 ################################################################################
 
 ifeq ($(UNAME_S), Linux)
-  FLOWLIB=bin/flowlib.tar.gz
   INOTIFY=hack/third-party/inotify
   INOTIFY_STUBS=$(INOTIFY)/inotify_stubs.c
   FSNOTIFY=hack/fsnotify_linux
   FSNOTIFY_STUBS=
-  ELF=elf
   RT=rt
   FRAMEWORKS=
-  SECTCREATE=
   EXE=
 endif
 ifeq ($(UNAME_S), Darwin)
-  FLOWLIB=bin/flowlib.tar.gz
   INOTIFY=hack/fsevents
   INOTIFY_STUBS=$(INOTIFY)/fsevents_stubs.c
   FSNOTIFY=hack/fsnotify_darwin
   FSNOTIFY_STUBS=
-  ELF=
   RT=
   FRAMEWORKS=CoreServices CoreFoundation
-  SECTCREATE=-cclib -sectcreate -cclib __text -cclib flowlib -cclib $(abspath $(FLOWLIB))
   EXE=
 endif
 ifeq ($(UNAME_S), Windows)
-  FLOWLIB=flowlib.rc
   INOTIFY=
   INOTIFY_STUBS=
   FSNOTIFY=hack/fsnotify_win
   FSNOTIFY_STUBS=$(FSNOTIFY)/fsnotify_stubs.c
-  ELF=
   RT=
   FRAMEWORKS=
-  SECTCREATE=
   EXE=.exe
 endif
 
@@ -72,7 +63,7 @@ MODULES=\
   src/common/profiling\
   src/common/utils\
   src/dts\
-  src/embedded\
+  src/flowlib\
   src/parser\
   src/parser_utils\
   src/parsing\
@@ -87,7 +78,6 @@ MODULES=\
   hack/find\
   hack/globals\
   hack/heap\
-  hack/hhi\
   hack/injection/default_injector\
   hack/procs\
   hack/search\
@@ -106,7 +96,6 @@ NATIVE_C_FILES=\
   $(INOTIFY_STUBS)\
   $(FSNOTIFY_STUBS)\
   hack/heap/hh_shared.c\
-  hack/hhi/hhi_elf.c\
   hack/utils/files.c\
   hack/utils/get_build_id.c\
   hack/utils/handle_stubs.c\
@@ -114,8 +103,6 @@ NATIVE_C_FILES=\
   hack/utils/realpath.c\
   hack/utils/sysinfo.c\
   hack/utils/priorities.c\
-  hack/hhi/hhi_win32res_stubs.c\
-  src/embedded/flowlib_elf.c\
   $(sort $(wildcard src/third-party/lz4/*.c))\
   $(INTERNAL_NATIVE_C_FILES)
 
@@ -126,7 +113,6 @@ OCAML_LIBRARIES=\
 
 NATIVE_LIBRARIES=\
   pthread\
-  $(ELF)\
   $(RT)
 
 OCP_BUILD_FILES=\
@@ -138,6 +124,9 @@ FILES_TO_COPY=\
 
 JS_STUBS=\
 	$(wildcard js/*.js)
+
+
+FLOWLIB=src/flowlib/flowlib_contents.ml
 
 # We need caml_hexstring_of_float for js_of_ocaml < 2.8
 JSOO_VERSION=$(shell which js_of_ocaml 2> /dev/null > /dev/null && js_of_ocaml --version)
@@ -171,7 +160,7 @@ EXTRA_LIB_OPTS=$(foreach dir, $(EXTRA_LIB_PATHS),-cclib -L -cclib $(dir))
 FRAMEWORK_OPTS=$(foreach framework, $(FRAMEWORKS),-cclib -framework -cclib $(framework))
 
 BYTECODE_LINKER_FLAGS=$(NATIVE_OBJECT_FILES) $(NATIVE_LIB_OPTS) $(EXTRA_LIB_OPTS) $(FRAMEWORK_OPTS)
-LINKER_FLAGS=$(BYTECODE_LINKER_FLAGS) $(SECTCREATE)
+LINKER_FLAGS=$(BYTECODE_LINKER_FLAGS)
 
 all: $(FLOWLIB) build-flow copy-flow-files
 all-ocp: build-flow-with-ocp copy-flow-files-ocp
@@ -189,6 +178,7 @@ clean:
 	rm -rf bin
 	rm -f hack/utils/get_build_id.gen.c
 	rm -f flow.odocl
+	rm -f $(FLOWLIB)
 
 clean-ocp: clean
 	[ -d _obuild ] && ocp-build clean || true
@@ -244,37 +234,16 @@ hack/utils/get_build_id.gen.c: FORCE scripts/utils.ml scripts/gen_build_id.ml
 _build/hack/utils/get_build_id.gen.c: FORCE scripts/utils.ml scripts/gen_build_id.ml
 	ocaml -I scripts -w -3 unix.cma scripts/gen_build_id.ml $@
 
-# We only rebuild the flowlib archive if any of the libs have changed. If the
-# archive has changed, then the incremental build needs to re-embed it into the
-# binary. Unfortunately we rely on ocamlbuild to embed the archive on OSX and
-# ocamlbuild isn't smart enough to understand dependencies outside of its
-# automatic-dependency stuff.
-bin/flowlib.tar.gz: $(wildcard lib/*)
-	mkdir -p bin
-	tar czf $@ -C lib .
-ifeq ($(UNAME_S), Darwin)
-	rm -f _build/src/flow.d.byte _build/src/flow.native
-	rm -f _obuild/flow/flow.byte _obuild/flow/flow.asm
-endif
-
-flowlib.rc: scripts/gen_index.ml $(wildcard lib/*)
-	ocaml -I scripts -w -3 unix.cma ./scripts/gen_index.ml flowlib.rc lib
+src/flowlib/flowlib_contents.ml: scripts/gen_flowlibs.ml $(wildcard lib/*)
+	ocaml -I scripts -w -3 unix.cma ./scripts/gen_flowlibs.ml lib $@
 
 copy-flow-files: build-flow $(FILES_TO_COPY)
 	mkdir -p bin
-ifeq ($(UNAME_S), Linux)
-	objcopy --add-section flowlib=$(FLOWLIB) _build/src/flow.native bin/flow$(EXE)
-else
 	cp _build/src/flow.native bin/flow$(EXE)
-endif
 
 copy-flow-files-ocp: build-flow-with-ocp $(FLOWLIB) $(FILES_TO_COPY)
 	mkdir -p bin
-ifeq ($(UNAME_S), Linux)
-	objcopy --add-section flowlib=$(FLOWLIB) _obuild/flow/flow.asm bin/flow$(EXE)
-else
 	cp _obuild/flow/flow.asm bin/flow$(EXE)
-endif
 
 do-test:
 	./runtests.sh bin/flow$(EXE)
