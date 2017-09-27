@@ -111,6 +111,7 @@ let _ =
      normally would cause a SIGPIPE instead throws an EPIPE exception. We handle exceptions and
      exit via FlowExitStatus.exit instead. *)
   let () = Sys_utils.set_signal Sys.sigpipe Sys.Signal_ignore in
+  let () = Printexc.record_backtrace true in
 
   try
     Daemon.check_entry_point (); (* this call might not return *)

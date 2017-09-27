@@ -24,6 +24,7 @@ let send_message message connection =
   Marshal_tools.to_fd_with_preamble connection.outfd (message : Prot.response)
 
 let send_ready connection =
+  Hh_logger.info "send_ready";
   Marshal_tools.to_fd_with_preamble connection.outfd ()
 
 let send_errors =
@@ -83,11 +84,16 @@ let add_client connections client logging_context =
 let remove_item lst item = List.filter (fun e -> e != item) lst
 
 let remove_client connections client =
-  ServerUtils.(begin
-    (* TODO figure out which of these is actually necessary/actually does something *)
-    client.client.close ();
-    shutdown_client (client.client.ic, client.client.oc)
-  end);
+  begin try
+    ServerUtils.(begin
+      (* TODO figure out which of these is actually necessary/actually does something *)
+      client.client.close ();
+      shutdown_client (client.client.ic, client.client.oc)
+    end)
+  with Unix.Unix_error (Unix.ECONNRESET, _, _) -> 
+    (* The connection is already closed *)
+    () 
+  end;
   remove_item connections client
 
 let client_fd_list = List.map (fun conn -> conn.infd)
@@ -167,7 +173,9 @@ let client_did_close connections client ~filenames =
 
 let get_logging_context client = client.logging_context
 
-let input_value client = Marshal_tools.from_fd_with_preamble client.infd
+let input_value client = 
+  try Marshal_tools.from_fd_with_preamble client.infd
+  with Unix.Unix_error (Unix.ECONNRESET, _, _) -> raise End_of_file
 
 let get_opened_files clients =
   List.fold_left (fun acc client -> SSet.union acc (client.opened_files)) SSet.empty clients

@@ -183,14 +183,17 @@ module VeryUnstable: ClientProtocol = struct
           let obj = Json_rpc.parse_json_rpc_response message in
           match obj with
             | Json_rpc.Obj ("subscribeToDiagnostics", _, None) ->
-                prerr_endline "received subscribe request";
+                prerr_endline "received subscribeToDiagnostics notification";
                 Some Prot.Subscribe
             | Json_rpc.Obj ("autocomplete", params, Some id) ->
+                prerr_endline "received autocomplete request";
                 handle_autocomplete id params
             | Json_rpc.Obj ("didOpen", params, None) ->
-              handle_did_open params
+                prerr_endline "received didOpen notificaton";
+                handle_did_open params
             | Json_rpc.Obj ("didClose", params, None) ->
-              handle_did_close params
+                prerr_endline "received didClose notificaton";
+                handle_did_close params
             | Json_rpc.Obj (method_name, _, id) ->
                 let id_str = match id with None -> "no id" | Some _ -> "an id" in
                 prerr_endline
@@ -289,13 +292,17 @@ module ProtocolFunctor (Protocol: ClientProtocol) = struct
        * This handshake would not be necessary if we converted all client/server
        * communication to use Marshal_tools rather than the built-in Marshal
        * module. *)
+      (prerr_endline "Waiting for handshake";
       let () = Marshal_tools.from_fd_with_preamble fd in
-      { local_env with is_server_ready = true }
+      prerr_endline "Got handshake!";
+      { local_env with is_server_ready = true })
     else
       let (message : Prot.response) =
         try
           Marshal_tools.from_fd_with_preamble fd
-        with End_of_file ->
+        with
+        | Unix.Unix_error (Unix.ECONNRESET, _, _) 
+        | End_of_file ->
           prerr_endline "Server closed the connection";
           (* TODO choose a standard exit code for this *)
           exit 1
@@ -307,6 +314,7 @@ module ProtocolFunctor (Protocol: ClientProtocol) = struct
       { local_env with pending_requests }
 
   let send_server_request fd msg =
+    prerr_endline "Sending request to the server";
     Marshal_tools.to_fd_with_preamble fd (msg: Prot.request)
 
   let handle_stdin_message buffered_stdin local_env =
@@ -350,17 +358,78 @@ module ProtocolFunctor (Protocol: ClientProtocol) = struct
     in
     while true do
       local_env := send_pending_requests oc_fd !local_env;
+
+      (* So I noticed something completely friggin insane on Windows. We have our stdin fd and our
+       * socket fd. We'd select both of them with an infinite timeout and read one or both when 
+       * they were ready.
+       *
+       * First I noticed that sometimes reading the socket would give EWOULDBLOCK (meaning the
+       * non-blocking socket was not ready to be read). This is weird, since select just told
+       * us it was read.
+       *
+       * Second, calling Unix.select twice in a row would return both stdin and the socket the
+       * first time, but only stdin the second time. It looked like this (both fds are ready)
+       *
+       * select [stdin] # returns [stdin]
+       * select [stdin] # returns [stdin]
+       * select [socket] # returns [socket]
+       * select [socket] # returns [socket]
+       * select [stdin, socket] # returns [stdin, socket] as expected
+       * select [stdin, socket] # returns [stdin] WTF
+       * select [stdin] # returns [stdin]
+       * select [socket] # returns [socket]
+       *
+       * Looking at the code for unix_select on Windows 
+       * (https://github.com/ocaml/ocaml/blob/4.03/otherlibs/win32unix/select.c#L1038)
+       * there seems to be different implementations depending on what you're selecting. A
+       * socket-only select hits one code path, with a general case as a fallback. I think
+       * the general case is buggy, so here's the hacky workaround.
+       *
+       * 1. Use the general case to wait with an infinite timeout for either the stdin or socket 
+       *    to be ready
+       * 2. Use the general case to select stdin (this seems to consistently work)
+       * 3. Use the socket-only case to select the socket
+       *
+       * - @glevi, who is so over this $#!7
+       *)
+
       (* Negative timeout means this call will wait indefinitely *)
-      let readable_fds, _, _ = Unix.select [stdin_fd; ic_fd] [] [] ~-.1.0 in
-      List.iter (fun fd ->
-        if fd = ic_fd then begin
-          local_env := handle_server_response ~strip_root ic_fd !local_env
-        end else if fd = stdin_fd then begin
-          local_env := handle_all_stdin_messages buffered_stdin !local_env
-        end else
-          failwith "Internal error: select returned an unknown fd"
-      ) readable_fds
+      ignore (Unix.select [stdin_fd; ic_fd] [] [] ~-.1.0);
+      
+
+      begin match Unix.select [ic_fd] [] [] 0.0 with
+      | [], _, _ -> ()
+      | _ -> 
+        try 
+          local_env := handle_server_response ~strip_root ic_fd !local_env 
+        with Unix.Unix_error (code, fn, msg) as e ->
+          Utils_js.prerr_endlinef "Unix error (%s) %s %s" (Unix.error_message code) fn msg;
+          raise e
+      end;
+
+      begin match Unix.select [stdin_fd] [] [] 0.0 with
+      | [], _, _ -> ()
+      | _ -> 
+        local_env := handle_all_stdin_messages buffered_stdin !local_env
+      end
     done
+      (* Utils_js.prerr_endlinef "Unix.select";
+      let readable_fds, _, _ = Unix.select [ic_fd] [] [] ~-.1.0 in
+      Utils_js.prerr_endlinef "Selected %d sockets ready for reading!" (List.length readable_fds);
+      let readable_fds, _, _ = Unix.select [ic_fd] [] [] ~-.1.0 in
+      Utils_js.prerr_endlinef "Selected %d sockets ready for reading!" (List.length readable_fds);
+      let readable_fds, _, _ = Unix.select [stdin_fd] [] [] ~-.1.0 in
+      Utils_js.prerr_endlinef "Selected %d sockets ready for reading!" (List.length readable_fds);
+      let readable_fds, _, _ = Unix.select [stdin_fd] [] [] ~-.1.0 in
+      Utils_js.prerr_endlinef "Selected %d sockets ready for reading!" (List.length readable_fds);
+      let readable_fds, _, _ = Unix.select [stdin_fd; ic_fd] [] [] ~-.1.0 in
+      Utils_js.prerr_endlinef "Selected %d sockets ready for reading!" (List.length readable_fds);
+      let readable_fds, _, _ = Unix.select [stdin_fd; ic_fd] [] [] ~-.1.0 in
+      Utils_js.prerr_endlinef "Selected %d sockets ready for reading!" (List.length readable_fds);
+      let readable_fds, _, _ = Unix.select [ic_fd] [] [] ~-.1.0 in
+      Utils_js.prerr_endlinef "Selected %d sockets ready for reading!" (List.length readable_fds);
+      let readable_fds, _, _ = Unix.select [stdin_fd] [] [] ~-.1.0 in
+      Utils_js.prerr_endlinef "Selected %d sockets ready for reading!" (List.length readable_fds); *)
 end
 
 module VeryUnstableProtocol = ProtocolFunctor(VeryUnstable)

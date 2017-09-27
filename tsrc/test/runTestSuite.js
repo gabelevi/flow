@@ -78,7 +78,9 @@ export default async function(
 
   totalTests = tests.length;
 
+  let testi = 0;
   for (const test of tests) {
+    testi++;
     const steps = [].concat(
       testSuite.getBeforeEach(emptyTestStep),
       test.steps,
@@ -134,7 +136,10 @@ export default async function(
         }
       }
 
+      let stepi = 0;
       for (const step of steps) {
+        stepi++;
+        console.log("Starting step %d of test %d", stepi, testi);
         if (!(step instanceof TestStep)) {
           throw new Error(format("Expected a TestStep, instead got", step));
         }
@@ -172,9 +177,12 @@ export default async function(
 
         // expose the pid of the server to the env, so that assertions can check
         // on the server status
-        envWrite.setServerPid(testBuilder.server);
+        envWrite.setServerPid(
+          testBuilder.server == null ? 0 : testBuilder.server.pid,
+        );
 
         let result = step.checkAssertions(envRead);
+        testBuilder.assertNoErrors();
         if (result.passed) {
           stepsPassed++;
         } else {
@@ -183,8 +191,7 @@ export default async function(
         stepResults.push(result);
       }
 
-      // No-op if nothing is running
-      await testBuilder.stopFlowServer();
+      await testBuilder.cleanup();
     } catch (e) {
       printStatus('ERROR');
       return {

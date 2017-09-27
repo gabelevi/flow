@@ -2,6 +2,7 @@
 
 import {execSync, spawn} from 'child_process';
 import {randomBytes} from 'crypto';
+import {closeSync, openSync, write} from 'fs';
 import {tmpdir} from 'os';
 import {basename, dirname, extname, join, sep as dir_sep} from 'path';
 import {format} from 'util';
@@ -36,7 +37,7 @@ export class TestBuilder {
   errorCheckCommand: CheckCommand;
   flowConfigFilename: string;
   lazyMode: 'ide' | 'fs' | null;
-  server: ?number;
+  server: null | child_process$ChildProcess = null;
   ide: null | {
     connection: RpcConnection;
     process: child_process$ChildProcess;
@@ -47,6 +48,7 @@ export class TestBuilder {
   sourceDir: string;
   suiteName: string;
   tmpDir: string;
+  testErrors = [];
 
   constructor(
     bin: string,
@@ -240,60 +242,60 @@ export class TestBuilder {
   }
 
   async startFlowServer(): Promise<void> {
+    if (this.server !== null) { 
+      return; 
+    }
     const lazyMode = this.lazyMode === null
-      ? ""
-      : format('--lazy-mode "%s"', this.lazyMode);
-    const [err, stdout, stderr] = await execManual(format(
-      "%s start --json --strip-root --temp-dir %s --wait %s %s",
+      ? []
+      : ['--lazy-mode', this.lazyMode];
+    const serverProcess = spawn(
       this.bin,
-      this.tmpDir,
-      lazyMode,
-      this.dir,
-    ));
-
-    if (!err) {
-      const response = JSON.parse(stdout.toString());
-      this.server = response.pid;
-    } else if (err.code === 11) {
-      // Already a server running...that's cool
-    } else {
-      throw new Error(format('Flow start failed!', err, stdout, stderr));
-    }
-  }
-
-  async stopFlowServer(): Promise<void> {
-    const server = this.server;
-    if (server != null ) {
-      this.server = null;
-      const [err, stdout, stderr] = await execManual(format(
-        "%s stop %s",
-        this.bin,
+      [
+        'server',
+        '--strip-root',
+        '--debug',
+        '--temp-dir', this.tmpDir,
+      ].concat(lazyMode)
+      .concat([
         this.dir,
-      ));
-
-      if (err != null) {
-        try {
-          process.kill(server);
-        } catch (e) {
-          console.log("Failed to kill server %s", server);
-        }
+      ]),
+      {
+        // Useful for debugging flow server
+        // stdio: ["pipe", "pipe", process.stderr],
+        cwd: this.dir,
       }
-    }
+    );
+    this.server = serverProcess;
+
+    const stderr = [];
+    const stderrFile = openSync(join(this.tmpDir, 'server.err'), 'w');
+    serverProcess.stderr.on('data', (data) => {
+      stderr.push(data.toString());
+      write(stderrFile, data.toString());
+    });
+
+    serverProcess.on('exit', (code, signal) => {
+      if (this.server != null) {
+        this.testErrors.push(format(
+          "flow server mysteriously died. Code: %d, Signal: %s, stderr:\n%s",
+          code,
+          signal,
+          stderr.join(""),
+        ));
+      }
+      this.stopFlowServer();
+      closeSync(stderrFile);
+    });
+
+    await sleep(1000);
   }
 
-  stopFlowServerSync(): void {
+  stopFlowServer(): void {
     const server = this.server;
     if (server != null) {
       this.server = null;
-      try {
-        execSync(format("%s stop %s", this.bin, this.dir));
-      } catch (e) {
-        try {
-          process.kill(server);
-        } catch (e) {
-          console.log("Failed to kill server %s", server);
-        }
-      }
+      server.stdin.end();
+      server.kill();
     }
   }
 
@@ -323,7 +325,17 @@ export class TestBuilder {
       );
       connection.listen();
 
-      ideProcess.on('exit', () => this.cleanupIDEConnection());
+      ideProcess.on('exit', (code, signal) => {
+        if (this.ide != null) {
+          this.testErrors.push(format(
+            "flow ide mysteriously died. Code: %d, Signal: %s, stderr:\n%s",
+            code,
+            signal,
+            this.getIDEStderr(),
+          ));
+        }
+        this.cleanupIDEConnection();
+      });
       ideProcess.on('close', () => this.cleanupIDEConnection());
 
       const emitter = new EventEmitter;
@@ -340,7 +352,10 @@ export class TestBuilder {
       });
 
       const stderr = [];
-      ideProcess.stderr.on('data', (data) => stderr.push(data.toString()));
+      ideProcess.stderr.on('data', (data) => {
+        process.stderr.write(data);
+        stderr.push(data.toString());
+      });
 
       this.ide = { process: ideProcess, connection, messages, stderr, emitter };
     }
@@ -349,10 +364,10 @@ export class TestBuilder {
   cleanupIDEConnection(): void {
     const ide = this.ide;
     if (ide != null) {
+      this.ide = null;
       ide.process.stdin.end();
       ide.process.kill();
       ide.connection.dispose();
-      this.ide = null;
     }
   }
 
@@ -379,7 +394,11 @@ export class TestBuilder {
     const messages = [...expected];
 
     return new Promise(resolve => {
-      if (ide == null || expected.length === 0) {
+      if (ide == null) {
+        throw new Error('No ide process running!');
+      }
+      if (expected.length === 0) {
+        console.log("Resolved - expected is empty");
         resolve();
         return; // Flow doesn't know resolve doesn't return
       }
@@ -389,19 +408,24 @@ export class TestBuilder {
         // While we could end early if the message doesn't match, let's wait for
         // either the timeout or the same number of messages
         if (messages.length === 0) {
+          console.log("Resolved - consumed all expected")
           done();
         }
       };
+      const timeout = setTimeout(() => { console.log("Done - timeout"); done(); }, timeoutMs);
       const done = () => {
         this.ide &&
           this.ide.emitter.removeListener('notification', onNotification);
+        clearTimeout(timeout);
         resolve();
       }
 
       // If we've already received some notifications then process them.
       ide.messages.forEach(onNotification);
 
-      setTimeout(done, timeoutMs);
+      if (process.platform == "win32") {
+        timeoutMs *= 3; // Give Windows a little more time
+      }
 
       ide.emitter.on('notification', onNotification);
     });
@@ -425,14 +449,25 @@ export class TestBuilder {
 
   cleanup(): void {
     this.cleanupIDEConnection();
-    this.stopFlowServerSync();
+    this.stopFlowServer();
+  }
+
+  assertNoErrors(): void {
+    if (this.testErrors.length > 0) {
+      throw new Error(format(
+        "%d test error%s: %s", 
+        this.testErrors.length, 
+        this.testErrors.length == 1 ? "" : "s",
+        this.testErrors.join("\n\n"),
+      ));
+    }
   }
 
   async waitForServerToDie(timeout: number): Promise<void> {
-    const pid = this.server;
-    if (pid == null) {
-      throw new Error('Cannot wait for a server that never started');
+    if (this.server == null) {
+      return;
     }
+    const pid = this.server.pid;
     let remaining = timeout;
     while (remaining > 0 && await isRunning(pid)) {
       remaining -= 100;
@@ -441,7 +476,7 @@ export class TestBuilder {
   }
 
   async forceRecheck(files: Array<string>): Promise<void> {
-    if (this.server && await isRunning(this.server)) {
+    if (this.server && await isRunning(this.server.pid)) {
       const [err, stdout, stderr] = await execManual(format(
         "%s force-recheck --no-auto-start --temp-dir %s %s",
         this.bin,

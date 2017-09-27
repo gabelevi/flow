@@ -325,7 +325,7 @@ export default suite(({
       )
       .because('Closing the file does not trigger recheck, just send errors'),
 
-    flowCmd(['status', '--strip-root'])
+    flowCmd(['status', '--no-auto-start','--strip-root'])
       .stdout(
         `
           Error: test.js:3
@@ -726,7 +726,7 @@ export default suite(({
       .because(
         'Opening focused.js will cause a recheck and show the errors in focused.js and dependency.js'
       ),
-    flowCmd(['status', '--strip-root'])
+    flowCmd(['status', '--no-auto-start','--strip-root'])
       .stdout(
         `
           Error: dependency.js:3
@@ -1136,7 +1136,7 @@ export default suite(({
       )
       .because('File is open and has @flow so we should get the error'),
     addFile('errorsWithNoFlowPragma.js', 'errors.js')
-      .flowCmd(['status', '--strip-root'])
+      .flowCmd(['status', '--no-auto-start','--strip-root'])
       .ideNewMessagesWithTimeout(
         5000,
         [
@@ -1425,7 +1425,7 @@ export default suite(({
           }
         ],
       ),
-      flowCmd(['status', '--strip-root'])
+      flowCmd(['status', '--no-auto-start','--strip-root'])
       .stdout(
         `
           Error: focusedWithCyclicDependency.js:3
@@ -1462,7 +1462,7 @@ export default suite(({
         ],
       ),
     addFiles('focused.js', 'dependency.js', 'otherDependent.js')
-      .flowCmd(['status', '--strip-root'])
+      .flowCmd(['status', '--no-auto-start','--strip-root'])
       .stdout(
         `
           No errors!
@@ -1485,7 +1485,7 @@ export default suite(({
         `,
       )
       .because('check-contents will report the error in the file it checks'),
-    flowCmd(['status', '--strip-root'])
+    flowCmd(['status', '--no-auto-start','--strip-root'])
       .stdout(
         `
           Error: dependency.js:3
@@ -1543,7 +1543,7 @@ export default suite(({
         ],
       ),
     addFiles('focused.js', 'dependency.js', 'otherDependent.js')
-      .flowCmd(['status', '--strip-root'])
+      .flowCmd(['status', '--no-auto-start','--strip-root'])
       .stdout(
         `
           Error: dependency.js:3
@@ -1565,7 +1565,7 @@ export default suite(({
       )
       .because('Two errors: one in each file'),
     removeFile('dependency.js')
-      .flowCmd(['status', '--strip-root'])
+      .flowCmd(['status', '--no-auto-start','--strip-root'])
       .stdout(
         `
           Error: focused.js:1
@@ -1585,7 +1585,7 @@ export default suite(({
       )
       .because('Error in dependency.js disappears and we get missing module error'),
     addFile('dependency.js')
-    .flowCmd(['status', '--strip-root'])
+    .flowCmd(['status', '--no-auto-start','--strip-root'])
       .stdout(
         `
           Error: dependency.js:3
@@ -1666,7 +1666,7 @@ export default suite(({
       // Unfortunately ideNewMessagesWithTimeout doesn't work here since the
       // order of the streamed errors isn't fixed :(
       .sleep(500),
-    flowCmd(['status', '--strip-root'])
+    flowCmd(['status', '--no-auto-start','--strip-root'])
       .stdout(
         `
           Error: dependency.js:3
@@ -1694,6 +1694,24 @@ export default suite(({
       )
       .because('Focusing on a dependency now checks its dependents'),
   ]).lazy('ide'),
+
+  test('Stop the flow ide command without killing the server', [
+    ideStart(),
+    addCode('var x = 123')
+      .ideStop()
+      .sleep(500),
+    addCode('var y: string = 123')
+      .newErrors(
+        `
+          test.js:5
+            5: var y: string = 123
+                               ^^^ number. This type is incompatible with
+            5: var y: string = 123
+                      ^^^^^^ string
+        `,
+      )
+      .because('Stopping the flow ide command used to kill the server accidentally'),
+  ]),
 
   test('Remove and restore an open file', [
     ideStart()
@@ -1733,7 +1751,7 @@ export default suite(({
         ],
       ),
     addFiles('focused.js', 'dependency.js', 'otherDependent.js')
-      .flowCmd(['status', '--strip-root'])
+      .flowCmd(['status', '--no-auto-start','--strip-root'])
       .stdout(
         `
           Error: dependency.js:3
@@ -1755,7 +1773,7 @@ export default suite(({
       ),
     removeFile('focused.js')
       .addFile('focused.js')
-      .flowCmd(['status', '--strip-root'])
+      .flowCmd(['status', '--no-auto-start','--strip-root'])
       .stdout(
         `
           Error: dependency.js:3

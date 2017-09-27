@@ -114,7 +114,7 @@ end = struct
     | e ->
       let msg = Printexc.to_string e in
       EventLogger.master_exception e;
-      Printf.fprintf stderr "Error: %s\n%!" msg;
+      Printf.fprintf stderr "handle_connection_ Error: %s\n%!" msg;
       Printexc.print_backtrace stderr;
       shutdown_client (ic, oc);
       env
@@ -124,12 +124,12 @@ end = struct
     try handle_connection_ genv env ~serve_ready_clients ~waiting_requests socket
     with
     | Unix.Unix_error (e, _, _) ->
-        Printf.fprintf stderr "Unix error: %s\n" (Unix.error_message e);
+        Printf.fprintf stderr "handle_connection Unix error: %s\n" (Unix.error_message e);
         Printexc.print_backtrace stderr;
         flush stderr;
         env
     | e ->
-        Printf.fprintf stderr "Error: %s\n" (Printexc.to_string e);
+        Printf.fprintf stderr "handle_connection Error: %s\n" (Printexc.to_string e);
         Printexc.print_backtrace stderr;
         flush stderr;
         env
@@ -221,6 +221,7 @@ end = struct
         (* Drain the queue again *)
         serve_queue ~genv ~env ~ready_sockets ~serve_ready_clients ~waiting_requests;
       in
+      let serve_ready_clients = if Sys.win32 then fun () -> () else serve_ready_clients in
       env := recheck_loop ~dfind genv !env ~serve_ready_clients;
 
       serve_queue ~genv ~env ~ready_sockets ~serve_ready_clients ~waiting_requests;
