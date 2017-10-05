@@ -94,9 +94,18 @@ let to_fd_with_preamble fd obj =
     raise Writing_Payload_Exception;
   ()
 
+let block_and_read fd buffer offset to_read =
+  begin match Unix.select [fd] [] [] ~-.1.0 with
+  | [], _, _ -> 
+    0
+  | _ -> 
+    let ret = Unix.read fd buffer offset to_read in
+    ret 
+  end   
+
 let rec read_payload fd buffer offset to_read =
   if to_read = 0 then offset else begin
-    let bytes_read = Unix.read fd buffer offset to_read in
+    let bytes_read = block_and_read fd buffer offset to_read in
     if bytes_read = 0 then offset else begin
       read_payload fd buffer (offset+bytes_read) (to_read-bytes_read)
     end
@@ -104,7 +113,7 @@ let rec read_payload fd buffer offset to_read =
 
 let from_fd_with_preamble fd =
   let preamble = String.create expected_preamble_size in
-  let bytes_read = Unix.read fd preamble 0 expected_preamble_size in
+  let bytes_read = block_and_read fd preamble 0 expected_preamble_size in
   if (bytes_read = 0)
   (** Unix manpage for read says 0 bytes read indicates end of file. *)
   then raise End_of_file
