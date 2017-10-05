@@ -78,7 +78,9 @@ export default async function(
 
   totalTests = tests.length;
 
+  let testi = 0;
   for (const test of tests) {
+    testi++;
     const steps = [].concat(
       testSuite.getBeforeEach(emptyTestStep),
       test.steps,
@@ -134,7 +136,10 @@ export default async function(
         }
       }
 
+      let stepi = 0;
       for (const step of steps) {
+        stepi++;
+        console.log("Starting step %d of test %d", stepi, testi);
         if (!(step instanceof TestStep)) {
           throw new Error(format("Expected a TestStep, instead got", step));
         }

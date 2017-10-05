@@ -72,6 +72,9 @@ let make_preamble (size : int) =
   preamble
 
 let parse_preamble preamble =
+  Printf.eprintf "preamble check: %d <> %d || %d <> %d\n%!" 
+    (String.length preamble) (expected_preamble_size) 
+    (String.get preamble 0 |> Char.code) (preamble_start_sentinel |> Char.code);
   if (String.length preamble) <> expected_preamble_size
     || (String.get preamble 0) <> preamble_start_sentinel then
     raise Malformed_Preamble_Exception;
@@ -97,14 +100,18 @@ let to_fd_with_preamble fd obj =
 let block_and_read fd buffer offset to_read =
   begin match Unix.select [fd] [] [] ~-.1.0 with
   | [], _, _ -> 
+    Printf.eprintf "block_and_read not ready\n%!";
     0
   | _ -> 
+    Printf.eprintf "Block and read ready\n%!";
     let ret = Unix.read fd buffer offset to_read in
+    Printf.eprintf "Read %d bytes\n%!" ret;
     ret 
   end   
 
 let rec read_payload fd buffer offset to_read =
   if to_read = 0 then offset else begin
+    Printf.eprintf "read_payload read (to_read = %d)\n%!" to_read;
     let bytes_read = block_and_read fd buffer offset to_read in
     if bytes_read = 0 then offset else begin
       read_payload fd buffer (offset+bytes_read) (to_read-bytes_read)
@@ -121,6 +128,7 @@ let from_fd_with_preamble fd =
     (Printf.eprintf "Error, only read %d bytes for preamble.\n" bytes_read;
     raise Reading_Preamble_Exception);
   let payload_size = parse_preamble preamble in
+  Printf.eprintf "Ok, preamble read, expecting %d bytes\n%!" payload_size;
   let payload = String.create payload_size in
   let payload_size_read = read_payload fd payload 0 payload_size in
   if (payload_size_read <> payload_size) then

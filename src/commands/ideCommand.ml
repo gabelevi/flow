@@ -183,14 +183,17 @@ module VeryUnstable: ClientProtocol = struct
           let obj = Json_rpc.parse_json_rpc_response message in
           match obj with
             | Json_rpc.Obj ("subscribeToDiagnostics", _, None) ->
-                prerr_endline "received subscribe request";
+                prerr_endline "received subscribeToDiagnostics notification";
                 Some Prot.Subscribe
             | Json_rpc.Obj ("autocomplete", params, Some id) ->
+                prerr_endline "received autocomplete request";
                 handle_autocomplete id params
             | Json_rpc.Obj ("didOpen", params, None) ->
-              handle_did_open params
+                prerr_endline "received didOpen notificaton";
+                handle_did_open params
             | Json_rpc.Obj ("didClose", params, None) ->
-              handle_did_close params
+                prerr_endline "received didClose notificaton";
+                handle_did_close params
             | Json_rpc.Obj (method_name, _, id) ->
                 let id_str = match id with None -> "no id" | Some _ -> "an id" in
                 prerr_endline
@@ -289,8 +292,10 @@ module ProtocolFunctor (Protocol: ClientProtocol) = struct
        * This handshake would not be necessary if we converted all client/server
        * communication to use Marshal_tools rather than the built-in Marshal
        * module. *)
+      (prerr_endline "Waiting for handshake";
       let () = Marshal_tools.from_fd_with_preamble fd in
-      { local_env with is_server_ready = true }
+      prerr_endline "Got handshake!";
+      { local_env with is_server_ready = true })
     else
       let (message : Prot.response) =
         try
@@ -310,6 +315,7 @@ module ProtocolFunctor (Protocol: ClientProtocol) = struct
       { local_env with pending_requests }
 
   let send_server_request fd msg =
+    prerr_endline "Sending request to the server";
     Marshal_tools.to_fd_with_preamble fd (msg: Prot.request)
 
   let handle_stdin_message buffered_stdin local_env =
@@ -395,7 +401,11 @@ module ProtocolFunctor (Protocol: ClientProtocol) = struct
       begin match Unix.select [ic_fd] [] [] 0.0 with
       | [], _, _ -> ()
       | _ -> 
+        try 
           local_env := handle_server_response ~strip_root ic_fd !local_env 
+        with Unix.Unix_error (code, fn, msg) as e ->
+          Utils_js.prerr_endlinef "Unix error (%s) %s %s" (Unix.error_message code) fn msg;
+          raise e
       end;
 
       begin match Unix.select [stdin_fd] [] [] 0.0 with
@@ -404,7 +414,23 @@ module ProtocolFunctor (Protocol: ClientProtocol) = struct
         local_env := handle_all_stdin_messages buffered_stdin !local_env
       end
     done
+      (* Utils_js.prerr_endlinef "Unix.select";
+      let readable_fds, _, _ = Unix.select [ic_fd] [] [] ~-.1.0 in
+      Utils_js.prerr_endlinef "Selected %d sockets ready for reading!" (List.length readable_fds);
+      let readable_fds, _, _ = Unix.select [ic_fd] [] [] ~-.1.0 in
+      Utils_js.prerr_endlinef "Selected %d sockets ready for reading!" (List.length readable_fds);
+      let readable_fds, _, _ = Unix.select [stdin_fd] [] [] ~-.1.0 in
+      Utils_js.prerr_endlinef "Selected %d sockets ready for reading!" (List.length readable_fds);
+      let readable_fds, _, _ = Unix.select [stdin_fd] [] [] ~-.1.0 in
+      Utils_js.prerr_endlinef "Selected %d sockets ready for reading!" (List.length readable_fds);
       let readable_fds, _, _ = Unix.select [stdin_fd; ic_fd] [] [] ~-.1.0 in
+      Utils_js.prerr_endlinef "Selected %d sockets ready for reading!" (List.length readable_fds);
+      let readable_fds, _, _ = Unix.select [stdin_fd; ic_fd] [] [] ~-.1.0 in
+      Utils_js.prerr_endlinef "Selected %d sockets ready for reading!" (List.length readable_fds);
+      let readable_fds, _, _ = Unix.select [ic_fd] [] [] ~-.1.0 in
+      Utils_js.prerr_endlinef "Selected %d sockets ready for reading!" (List.length readable_fds);
+      let readable_fds, _, _ = Unix.select [stdin_fd] [] [] ~-.1.0 in
+      Utils_js.prerr_endlinef "Selected %d sockets ready for reading!" (List.length readable_fds); *)
 end
 
 module VeryUnstableProtocol = ProtocolFunctor(VeryUnstable)

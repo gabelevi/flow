@@ -2,6 +2,7 @@
 
 import {execSync, spawn} from 'child_process';
 import {randomBytes} from 'crypto';
+import {closeSync, openSync, write} from 'fs';
 import {tmpdir} from 'os';
 import {basename, dirname, extname, join, sep as dir_sep} from 'path';
 import {format} from 'util';
@@ -269,8 +270,10 @@ export class TestBuilder {
     this.server = serverProcess;
 
     const stderr = [];
+    const stderrFile = openSync(join(this.tmpDir, 'server.err'), 'w');
     serverProcess.stderr.on('data', (data) => {
       stderr.push(data.toString());
+      write(stderrFile, data.toString());
     });
 
     serverProcess.on('exit', (code, signal) => {
@@ -283,6 +286,7 @@ export class TestBuilder {
         ));
       }
       this.stopFlowServer();
+      closeSync(stderrFile);
     });
 
     // Wait for the server to be ready
@@ -361,6 +365,7 @@ export class TestBuilder {
 
       const stderr = [];
       ideProcess.stderr.on('data', (data) => {
+        process.stderr.write(data);
         stderr.push(data.toString());
       });
 
@@ -405,6 +410,7 @@ export class TestBuilder {
         throw new Error('No ide process running!');
       }
       if (expected.length === 0) {
+        console.log("Resolved - expected is empty");
         resolve();
         return; // Flow doesn't know resolve doesn't return
       }
@@ -414,19 +420,24 @@ export class TestBuilder {
         // While we could end early if the message doesn't match, let's wait for
         // either the timeout or the same number of messages
         if (messages.length === 0) {
+          console.log("Resolved - consumed all expected")
           done();
         }
       };
+      const timeout = setTimeout(() => { console.log("Done - timeout"); done(); }, timeoutMs);
       const done = () => {
         this.ide &&
           this.ide.emitter.removeListener('notification', onNotification);
+        clearTimeout(timeout);
         resolve();
       }
 
       // If we've already received some notifications then process them.
       ide.messages.forEach(onNotification);
 
-      setTimeout(done, timeoutMs);
+      if (process.platform == "win32") {
+        timeoutMs *= 3; // Give Windows a little more time
+      }
 
       ide.emitter.on('notification', onNotification);
     });

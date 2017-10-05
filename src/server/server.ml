@@ -646,6 +646,7 @@ module FlowProgram : Server.SERVER_PROGRAM = struct
     in
     let options = genv.ServerEnv.options in
     let workers = genv.ServerEnv.workers in
+    Hh_logger.debug "About to handle command";
     begin match command with
     | ServerProt.AUTOCOMPLETE fn ->
         Hh_logger.debug "Request: autocomplete %s" (File_input.filename_of_file_input fn);
@@ -843,8 +844,15 @@ module FlowProgram : Server.SERVER_PROGRAM = struct
     | _ -> true
 
   let handle_client genv env ~serve_ready_clients ~waiting_requests client =
-    let command : ServerProt.command_with_context = Marshal.from_channel client.ic in
+    Hh_logger.debug "Handle_client";
+    let command : ServerProt.command_with_context = try
+      Marshal.from_channel client.ic
+    with e ->
+      Hh_logger.debug "handle_client error: %s" (Printexc.to_string e);
+      raise e
+    in
     let continuation env =
+      Hh_logger.debug "Handle_client continuation";
       let env = respond ~genv ~env ~serve_ready_clients ~client command in
       if should_close command then client.close ();
       env in
