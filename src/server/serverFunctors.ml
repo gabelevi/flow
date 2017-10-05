@@ -224,6 +224,7 @@ end = struct
         (* Drain the queue again *)
         serve_queue ~genv ~env ~ready_sockets ~serve_ready_clients ~waiting_requests;
       in
+      let serve_ready_clients = if Sys.win32 then fun () -> () else serve_ready_clients in
       env := recheck_loop ~dfind genv !env ~serve_ready_clients;
 
       serve_queue ~genv ~env ~ready_sockets ~serve_ready_clients ~waiting_requests;
