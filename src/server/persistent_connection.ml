@@ -14,17 +14,27 @@ type single_client = {
   logging_context: FlowEventLogger.logging_context;
   subscribed: bool;
   opened_files: SSet.t;
+  mutable broken: bool;
 }
 
 type t = single_client list
 
 let empty = []
 
-let send_message message connection =
-  Marshal_tools.to_fd_with_preamble connection.outfd (message : Prot.response)
+let send_message_to_client message connection =
+  if connection.broken
+  then Hh_logger.info "Skipping sending message to broken persistent connection client"
+  else
+    begin try Marshal_tools.to_fd_with_preamble connection.outfd message
+    with Unix.Unix_error (Unix.EPIPE, _, _) ->
+      (* Broken pipe most likely means that the client has died *)
+      connection.broken <- true;
+      Hh_logger.info "Marking client as broken due to an EPIPE error"
+    end
 
-let send_ready connection =
-  Marshal_tools.to_fd_with_preamble connection.outfd ()
+
+let send_message message = send_message_to_client (message : Prot.response)
+let send_ready = send_message_to_client ()
 
 let send_errors =
   (* We don't know what kind of file the filename represents,
@@ -75,6 +85,7 @@ let add_client connections client logging_context =
       logging_context;
       subscribed = false;
       opened_files = SSet.empty;
+      broken = false;
     }
   in
   (new_connection :: connections, new_connection)
@@ -83,6 +94,7 @@ let add_client connections client logging_context =
 let remove_item lst item = List.filter (fun e -> e != item) lst
 
 let remove_client connections client =
+  Hh_logger.info "Removing persistent connection client";
   ServerUtils.(begin
     (* TODO figure out which of these is actually necessary/actually does something *)
     client.client.close ();
@@ -167,7 +179,17 @@ let client_did_close connections client ~filenames =
 
 let get_logging_context client = client.logging_context
 
-let input_value client = Marshal_tools.from_fd_with_preamble client.infd
+let input_value client =
+  try Some (Marshal_tools.from_fd_with_preamble client.infd)
+  with End_of_file ->
+    client.broken <- true;
+    Hh_logger.info "Marking client as broken due to an End_of_file error";
+    None
 
 let get_opened_files clients =
   List.fold_left (fun acc client -> SSet.union acc (client.opened_files)) SSet.empty clients
+
+let filter_broken clients =
+  clients
+  |> List.filter (fun client -> client.broken)
+  |> List.fold_left remove_client clients
