@@ -186,9 +186,14 @@ let get_logging_context client = client.logging_context
 
 let input_value client =
   try Some (Marshal_tools.from_fd_with_preamble client.infd)
-  with End_of_file ->
+  with
+  | End_of_file ->
     client.broken <- true;
     Hh_logger.info "Marking client as broken due to an End_of_file error";
+    None
+  | Unix.Unix_error (Unix.ECONNRESET, _, _) ->
+    client.broken <- true;
+    Hh_logger.info "Marking client as broken due to an ECONNRESET error";
     None
 
 let get_opened_files clients =
