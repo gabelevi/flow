@@ -353,17 +353,58 @@ module ProtocolFunctor (Protocol: ClientProtocol) = struct
     in
     while true do
       local_env := send_pending_requests oc_fd !local_env;
+
+      (* So I noticed something completely friggin insane on Windows. We have our stdin fd and our
+       * socket fd. We'd select both of them with an infinite timeout and read one or both when 
+       * they were ready.
+       *
+       * First I noticed that sometimes reading the socket would give EWOULDBLOCK (meaning the
+       * non-blocking socket was not ready to be read). This is weird, since select just told
+       * us it was read.
+       *
+       * Second, calling Unix.select twice in a row would return both stdin and the socket the
+       * first time, but only stdin the second time. It looked like this (both fds are ready)
+       *
+       * select [stdin] # returns [stdin]
+       * select [stdin] # returns [stdin]
+       * select [socket] # returns [socket]
+       * select [socket] # returns [socket]
+       * select [stdin, socket] # returns [stdin, socket] as expected
+       * select [stdin, socket] # returns [stdin] WTF
+       * select [stdin] # returns [stdin]
+       * select [socket] # returns [socket]
+       *
+       * Looking at the code for unix_select on Windows 
+       * (https://github.com/ocaml/ocaml/blob/4.03/otherlibs/win32unix/select.c#L1038)
+       * there seems to be different implementations depending on what you're selecting. A
+       * socket-only select hits one code path, with a general case as a fallback. I think
+       * the general case is buggy, so here's the hacky workaround.
+       *
+       * 1. Use the general case to wait with an infinite timeout for either the stdin or socket 
+       *    to be ready
+       * 2. Use the general case to select stdin (this seems to consistently work)
+       * 3. Use the socket-only case to select the socket
+       *
+       * - @glevi, who is so over this $#!7
+       *)
+
       (* Negative timeout means this call will wait indefinitely *)
-      let readable_fds, _, _ = Unix.select [stdin_fd; ic_fd] [] [] ~-.1.0 in
-      List.iter (fun fd ->
-        if fd = ic_fd then begin
-          local_env := handle_server_response ~strip_root ic_fd !local_env
-        end else if fd = stdin_fd then begin
-          local_env := handle_all_stdin_messages buffered_stdin !local_env
-        end else
-          failwith "Internal error: select returned an unknown fd"
-      ) readable_fds
+      ignore (Unix.select [stdin_fd; ic_fd] [] [] ~-.1.0);
+      
+
+      begin match Unix.select [ic_fd] [] [] 0.0 with
+      | [], _, _ -> ()
+      | _ -> 
+          local_env := handle_server_response ~strip_root ic_fd !local_env 
+      end;
+
+      begin match Unix.select [stdin_fd] [] [] 0.0 with
+      | [], _, _ -> ()
+      | _ -> 
+        local_env := handle_all_stdin_messages buffered_stdin !local_env
+      end
     done
+      let readable_fds, _, _ = Unix.select [stdin_fd; ic_fd] [] [] ~-.1.0 in
 end
 
 module VeryUnstableProtocol = ProtocolFunctor(VeryUnstable)
