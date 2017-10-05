@@ -95,11 +95,16 @@ let remove_item lst item = List.filter (fun e -> e != item) lst
 
 let remove_client connections client =
   Hh_logger.info "Removing persistent connection client";
-  ServerUtils.(begin
-    (* TODO figure out which of these is actually necessary/actually does something *)
-    client.client.close ();
-    shutdown_client (client.client.ic, client.client.oc)
-  end);
+  begin try
+    ServerUtils.(begin
+      (* TODO figure out which of these is actually necessary/actually does something *)
+      client.client.close ();
+      shutdown_client (client.client.ic, client.client.oc)
+    end)
+  with Unix.Unix_error (Unix.ECONNRESET, _, _) ->
+    (* The connection is already closed *)
+    ()
+  end;
   remove_item connections client
 
 let client_fd_list = List.map (fun conn -> conn.infd)
