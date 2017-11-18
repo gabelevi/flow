@@ -11,7 +11,7 @@ val init:
   profiling:Profiling_js.running ->
   workers:Worker.t list option ->
   Options.t ->
-  FilenameSet.t * SSet.t * bool * ServerEnv.errors
+  FilenameSet.t * SSet.t * bool * ServerErrors.errors
 
 val calc_deps:
   options:Options.t ->
@@ -37,8 +37,8 @@ val full_check:
   focus_targets:FilenameSet.t option ->
   should_merge:bool ->
   File_key.t list ->
-  ServerEnv.errors ->
-  CheckedSet.t * ServerEnv.errors
+  ServerErrors.errors ->
+  CheckedSet.t * ServerErrors.errors
 
 val basic_check_contents:
   options: Options.t ->

@@ -5,8 +5,48 @@
  * LICENSE file in the root directory of this source tree.
  *)
 
-open ServerEnv
-open Utils_js
+type errors = {
+  (* errors are stored in a map from file path to error set, so that the errors
+     from checking particular files can be cleared during recheck. *)
+  local_errors: Errors.ErrorSet.t Utils_js.FilenameMap.t;
+  (* errors encountered during merge have to be stored separately so
+     dependencies can be cleared during merge. *)
+  merge_errors: Errors.ErrorSet.t Utils_js.FilenameMap.t;
+  (* error suppressions in the code *)
+  suppressions: Error_suppressions.t Utils_js.FilenameMap.t;
+  (* lint severity settings in the code *)
+  severity_cover_set: ExactCover.lint_severity_cover Utils_js.FilenameMap.t;
+}
+
+type collated_errors = {
+  collated_errorset: Errors.ErrorSet.t;
+  collated_warning_map: Errors.ErrorSet.t Utils_js.FilenameMap.t;
+  collated_suppressed_errors: (Errors.error * Loc.LocSet.t) list;
+}
+
+type state = {
+  mutable errors: errors;
+  mutable collated_errors: collated_errors;
+  mutable typecheck_in_progress: bool;
+}
+
+let clear_files files =
+  state.errors <- FilenameSet.fold
+    (fun file { local_errors; merge_errors; suppressions; severity_cover_set; } ->
+      Hh_logger.debug "clear errors %s" (File_key.to_string file);
+      {
+        local_errors = FilenameMap.remove file local_errors;
+        merge_errors = FilenameMap.remove file merge_errors;
+        suppressions = FilenameMap.remove file suppressions;
+        severity_cover_set = FilenameMap.remove file severity_cover_set;
+      }
+    ) files state.errors
+    
+val report_local_errors: Errors.ErrorSet.t Utils_js.FilenameMap.t -> unit
+val report_merge_errors: File_key.t -> Errors.ErrorSet.t -> unit
+
+let finalize () = state.typecheck_in_progress <- true
+
 
 (* combine error maps into a single error set and a filtered warning map
  *
@@ -24,6 +64,7 @@ open Utils_js
 let regenerate =
   let open Errors in
   let open Error_suppressions in
+  let open Utils_js in
   let add_unused_suppression_warnings checked suppressions warnings =
     (* For each unused suppression, create an warning *)
     Error_suppressions.unused suppressions
@@ -60,10 +101,7 @@ let regenerate =
     let suppressed_errors = List.rev_append file_suppressed_errors suppressed_errors in
     (errors, warnings, suppressed_errors, suppressions)
   in
-  fun env ->
-    let {
-      ServerEnv.local_errors; merge_errors; suppressions; severity_cover_set;
-    } = env.ServerEnv.errors in
+  fun ~checked_files ~errors:{ local_errors; merge_errors; suppressions; severity_cover_set; } ->
     let suppressions = union_suppressions suppressions in
 
     (* union the errors from all files together, filtering suppressed errors *)
@@ -76,15 +114,15 @@ let regenerate =
     in
 
     let collated_warning_map =
-      add_unused_suppression_warnings env.ServerEnv.checked_files suppressions warnings in
+      add_unused_suppression_warnings checked_files suppressions warnings in
     { collated_errorset; collated_warning_map; collated_suppressed_errors }
 
-let get_with_separate_warnings env =
-  let open ServerEnv in
-  let collated_errors = match !(env.collated_errors) with
+
+let get_with_separate_warnings ~checked_files t =
+  let collated_errors = match t.collated_errors with
   | None ->
-    let collated_errors = regenerate env in
-    env.collated_errors := Some collated_errors;
+    let collated_errors = regenerate ~checked_files ~errors:t.errors in
+    t.collated_errors <- Some collated_errors;
     collated_errors
   | Some collated_errors ->
     collated_errors
@@ -93,8 +131,9 @@ let get_with_separate_warnings env =
   (collated_errorset, collated_warning_map, collated_suppressed_errors)
 
 (* combine error maps into a single error set and a single warning set *)
-let get env =
+let get ~checked_files t =
   let open Errors in
-  let errors, warning_map, suppressed_errors = get_with_separate_warnings env in
-  let warnings = FilenameMap.fold (fun _key -> ErrorSet.union) warning_map ErrorSet.empty in
+  let errors, warning_map, suppressed_errors = get_with_separate_warnings ~checked_files t in
+  let warnings =
+    Utils_js.FilenameMap.fold (fun _key -> ErrorSet.union) warning_map ErrorSet.empty in
   (errors, warnings, suppressed_errors)

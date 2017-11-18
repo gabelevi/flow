@@ -13,9 +13,9 @@ open Utils_js
 
 let clear_errors (files: FilenameSet.t) errors =
   FilenameSet.fold
-    (fun file { ServerEnv.local_errors; merge_errors; suppressions; severity_cover_set; } ->
+    (fun file { ServerErrors.local_errors; merge_errors; suppressions; severity_cover_set; } ->
       Hh_logger.debug "clear errors %s" (File_key.to_string file);
-      { ServerEnv.
+      { ServerErrors.
         local_errors = FilenameMap.remove file local_errors;
         merge_errors = FilenameMap.remove file merge_errors;
         suppressions = FilenameMap.remove file suppressions;
@@ -186,7 +186,7 @@ let commit_modules_and_resolve_requires
   (* TODO remove after lookup overhaul *)
   Module_js.clear_filename_cache ();
 
-  let { ServerEnv.local_errors; merge_errors; suppressions; severity_cover_set } = errors in
+  let { ServerErrors.local_errors; merge_errors; suppressions; severity_cover_set } = errors in
 
   let changed_modules, local_errors = commit_modules
     ~options profiling ~workers parsed unparsed ~old_modules local_errors new_or_changed in
@@ -195,7 +195,7 @@ let commit_modules_and_resolve_requires
     ~options profiling ~workers parsed in
   let local_errors = FilenameMap.union resolve_errors local_errors in
 
-  changed_modules, { ServerEnv.local_errors; merge_errors; suppressions; severity_cover_set }
+  changed_modules, { ServerErrors.local_errors; merge_errors; suppressions; severity_cover_set }
 
 let error_set_of_merge_exception file exc =
   let loc = Loc.({ none with source = Some file }) in
@@ -259,7 +259,7 @@ let typecheck
   ~all_dependent_files
   ~make_merge_input
   ~persistent_connections =
-  let { ServerEnv.local_errors; merge_errors; suppressions; severity_cover_set } = errors in
+  let { ServerErrors.local_errors; merge_errors; suppressions; severity_cover_set } = errors in
 
   (* The infer_input passed into typecheck basically tells us what the caller wants to typecheck.
    * However, due to laziness, it's possible that certain dependents or dependencies have not been
@@ -413,11 +413,11 @@ let typecheck
     Hh_logger.info "Checked set: %s" (CheckedSet.debug_counts_to_string checked);
 
     checked,
-    { ServerEnv.local_errors; merge_errors; suppressions; severity_cover_set }
+    { ServerErrors.local_errors; merge_errors; suppressions; severity_cover_set }
 
   | None ->
     unchanged_checked,
-      { ServerEnv.local_errors; merge_errors; suppressions; severity_cover_set }
+      { ServerErrors.local_errors; merge_errors; suppressions; severity_cover_set }
 
 (* When checking contents, ensure that dependencies are checked. Might have more
    general utility. *)
@@ -718,11 +718,8 @@ let recheck_with_profiling ~profiling ~options ~workers ~updates env ~force_focu
   let new_or_changed_count = FilenameSet.cardinal new_or_changed in
 
   (* clear errors for new, changed and deleted files *)
-  let errors =
-    errors
-    |> clear_errors new_or_changed
-    |> clear_errors deleted
-  in
+  ServerErrors.clear_files new_or_changed;
+  ServerErrors.clear_files deleted;
 
   (* record reparse errors *)
   let errors =
