@@ -49,6 +49,14 @@ end = struct
     on_exit_thread: unit Lwt.t;
   }
 
+  let handle_error_cache_notification = function
+  | MonitorProt.ErrorCache.ClearCache ->
+    ErrorCache.clear ()
+  | MonitorProt.ErrorCache.CacheErrors { errors; warnings } ->
+    ErrorCache.add ~errors ~warnings
+  | MonitorProt.ErrorCache.FinalizeCache ->
+    ErrorCache.finalize ()
+
   let handle_response ~msg ~connection:_ =
     match msg with
     | MonitorProt.Response (request_id, response) ->
@@ -82,6 +90,7 @@ end = struct
       | None -> Logger.error "Failed to look up persistent client #%d" client_id
       | Some connection -> PersistentConnection.write ~msg:response connection
       )
+    | MonitorProt.ErrorCacheNotification notif -> handle_error_cache_notification notif
 
   module CommandLoop = LwtLoop.Make (struct
     type acc = ServerConnection.t

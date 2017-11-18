@@ -24,6 +24,17 @@ type monitor_to_server_message =
 (* A notification that a persistent socket connection is dead *)
 | DeadPersistentConnection of PersistentProt.client_id
 
+(* The monitor will cache errors from the server. *)
+module ErrorCache = struct
+  type notification =
+  (* The server is starting a recheck or something like that. Clear the cache *)
+  | ClearCache
+  (* The server found some new errors. Add them to the cache *)
+  | CacheErrors of {errors: Errors.ErrorSet.t; warnings: Errors.ErrorSet.t}
+  (* The server has finished a recheck or something like that. Mark the cache as final *)
+  | FinalizeCache
+end
+
 (* These are the messages that the server sends to the monitor *)
 type server_to_monitor_message =
 (* A response to an ephemeral socket's request *)
@@ -34,6 +45,9 @@ type server_to_monitor_message =
 | PersistentConnectionResponse of PersistentProt.client_id * PersistentProt.response
 (* A notification of the server's current status *)
 | StatusUpdate of ServerStatus.status
+(* A notification telling the monitor to do something with the error cache *)
+| ErrorCacheNotification of ErrorCache.notification
+
 
 (* These are the messages that the server sends to an ephemeral socket connection *)
 type monitor_to_client_message =
