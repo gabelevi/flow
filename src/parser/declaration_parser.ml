@@ -97,7 +97,7 @@ module Declaration
   (* Strict is true if we were already in strict mode or if we are newly in
    * strict mode due to a directive in the function.
    * Simple is the IsSimpleParameterList thing from the ES6 spec *)
-  let strict_post_check env ~strict ~simple id (_, { Ast.Function.Params.params; rest }) =
+  let strict_post_check env ~strict ~simple id (_, { Ast.Function.Params.params; rest; this=_; }) =
     if strict || not simple
     then
       (* If we are doing this check due to strict mode than there are two
@@ -126,6 +126,9 @@ module Declaration
 
   let function_params =
     let rec param env =
+      if Peek.token env = T_THIS
+      then error env Error.ThisParamMustBeFirst;
+
       let left = Parse.pattern env Error.StrictParamName in
       (* TODO: shouldn't Parse.pattern recognize Assignment patterns? *)
       if Peek.token env = T_ASSIGN
@@ -136,7 +139,7 @@ module Declaration
         (loc, Pattern.Assignment { Pattern.Assignment.left; right })
       end else
         left
-    and param_list env acc =
+    and param_list env this acc =
       match Peek.token env with
       | T_EOF
       | T_RPAREN
@@ -153,21 +156,38 @@ module Declaration
           in
           if Peek.token env <> T_RPAREN
           then error env Error.ParameterAfterRestParameter;
-          { Ast.Function.Params.params = List.rev acc; rest }
+          { Ast.Function.Params.params = List.rev acc; rest; this; }
       | _ ->
           let the_param = param env in
           if Peek.token env <> T_RPAREN
           then Expect.token env T_COMMA;
-          param_list env (the_param::acc)
+          param_list env this (the_param::acc)
+    in
 
-    in fun ~await ~yield -> with_loc (fun env ->
+    let this_param_annotation env =
+      if should_parse_types env && Peek.token env = T_THIS
+      then begin
+        let this_param = Some (with_loc (fun env ->
+          Expect.token env T_THIS;
+          if Peek.token env <> T_COLON
+          then error env Error.ThisParamAnnotationRequired;
+          Type.annotation env
+        ) env) in
+        (* Other params also omit the comma from their location *)
+        if Peek.token env = T_COMMA then Eat.token env;
+        this_param
+      end else None
+    in
+
+    fun ~await ~yield -> with_loc (fun env ->
       let env = env
         |> with_allow_await await
         |> with_allow_yield yield
         |> with_in_formal_parameters true
       in
       Expect.token env T_LPAREN;
-      let params = param_list env [] in
+      let this_param = this_param_annotation env in
+      let params = param_list env this_param [] in
       Expect.token env T_RPAREN;
       params
     )
@@ -216,7 +236,7 @@ module Declaration
     | _, Pattern.Identifier _ ->  true
     | _ -> false
 
-    in fun (_, { Ast.Function.Params.params; rest }) ->
+    in fun (_, { Ast.Function.Params.params; rest; this=_; }) ->
       rest = None && List.for_all is_simple_param params
 
   let _function env =

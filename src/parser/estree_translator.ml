@@ -846,17 +846,28 @@ end with type t = Impl.t) = struct
         pattern_identifier loc pattern_id
     | _loc, Expression expr -> expression expr)
 
-  and function_params = Ast.Function.Params.(function
-    | _, { params; rest = Some (rest_loc, { Function.RestElement.argument }) } ->
-      let rest = node "RestElement" rest_loc [
-        "argument", pattern argument;
-      ] in
-      let rev_params = params |> List.map pattern |> List.rev in
-      let params = List.rev (rest::rev_params) in
-      array params
-    | _, { params; rest = None } ->
-      array_of_list pattern params
+  and function_params = Ast.Function.Params.(function (_, { params; rest; this; }) ->
+    let rev_params = List.fold_left (fun acc param -> pattern param :: acc) [] params in
+    let rev_params = match rest with
+      | Some (rest_loc, { Function.RestElement.argument }) ->
+        let rest = node "RestElement" rest_loc [
+          "argument", pattern argument;
+        ] in
+        rest :: rev_params
+      | None -> rev_params
+    in
+    let params = List.rev rev_params in
+    let params = match this with
+      | Some this -> (this_param this) :: params
+      | None -> params
+    in
+    array params
   )
+
+  and this_param (loc, annotation) =
+    node "ThisParameter" loc [
+      "typeAnnotation", type_annotation annotation;
+    ]
 
   and array_pattern_element = Pattern.Array.(function
     | Element p -> pattern p
@@ -1042,6 +1053,7 @@ end with type t = Impl.t) = struct
     | NumberLiteral n -> number_literal_type (loc, n)
     | BooleanLiteral b -> boolean_literal_type (loc, b)
     | Exists -> exists_type loc
+    | This -> this_type loc
   )
 
   and any_type loc = node "AnyTypeAnnotation" loc []
@@ -1066,12 +1078,13 @@ end with type t = Impl.t) = struct
     ]
 
   and function_type (loc, fn) = Type.Function.(
-    let (_, { Params.params; rest }) = fn.params in
+    let (_, { Params.params; rest; this }) = fn.params in
     node "FunctionTypeAnnotation" loc [
       "params", array_of_list function_type_param params;
       "returnType", _type fn.return;
       "rest", option function_type_rest rest;
       "typeParameters", option type_parameter_declaration fn.tparams;
+      "thisParam", option this_param this;
     ]
   )
 
@@ -1256,6 +1269,8 @@ end with type t = Impl.t) = struct
     ]
 
   and exists_type loc = node "ExistsTypeAnnotation" loc []
+
+  and this_type loc = node "ThisTypeAnnotation" loc []
 
   and type_annotation (loc, ty) =
     node "TypeAnnotation" loc [

@@ -40,21 +40,13 @@
               "range":[22,31],
               "params":[],
               "returnType":{
-                "type":"GenericTypeAnnotation",
+                "type":"ThisTypeAnnotation",
                 "loc":{"source":null,"start":{"line":2,"column":7},"end":{"line":2,"column":11}},
-                "range":[27,31],
-                "id":{
-                  "type":"Identifier",
-                  "loc":{"source":null,"start":{"line":2,"column":7},"end":{"line":2,"column":11}},
-                  "range":[27,31],
-                  "name":"this",
-                  "typeAnnotation":null,
-                  "optional":false
-                },
-                "typeParameters":null
+                "range":[27,31]
               },
               "rest":null,
-              "typeParameters":null
+              "typeParameters":null,
+              "thisParam":null
             },
             "method":true,
             "optional":false,

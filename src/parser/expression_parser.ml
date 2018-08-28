@@ -1068,7 +1068,7 @@ module Expression
                                annot=None;
                                optional=false;
           } in
-          (loc, { Ast.Function.Params.params = [param]; rest = None }), None, None
+          (loc, { Ast.Function.Params.params = [param]; rest = None; this = None; }), None, None
         else
           let params =
             let yield = allow_yield env in

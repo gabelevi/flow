@@ -109,6 +109,7 @@ module Type (Parse: Parser_common.PARSER) : TYPE = struct
         fst param, None, (fst param, { Ast.Type.Function.Params.
           params = [param];
           rest = None;
+          this = None;
         })
       in
       function_with_params env start_loc tparams params
@@ -203,6 +204,7 @@ module Type (Parse: Parser_common.PARSER) : TYPE = struct
     | T_STRING_TYPE -> Some Type.String
     | T_VOID_TYPE -> Some Type.Void
     | T_NULL -> Some Type.Null
+    | T_THIS -> Some Type.This
     | _ -> None
 
   and tuple =
@@ -256,7 +258,7 @@ module Type (Parse: Parser_common.PARSER) : TYPE = struct
           let annot = _type env in
           anonymous_function_param env annot
 
-    in let rec param_list env acc =
+    in let rec param_list env this acc =
       match Peek.token env with
       | T_EOF
       | T_ELLIPSIS
@@ -271,14 +273,30 @@ module Type (Parse: Parser_common.PARSER) : TYPE = struct
           end else
             None
         in
-        { Ast.Type.Function.Params.params = List.rev acc; rest; }
+        { Ast.Type.Function.Params.params = List.rev acc; rest; this; }
       | _ ->
         let acc = (param env)::acc in
         if Peek.token env <> T_RPAREN
         then Expect.token env T_COMMA;
-        param_list env acc
+        param_list env this acc
 
-    in fun env -> param_list env
+    in let this_param_annotation env =
+      if Peek.token env = T_THIS
+      then begin
+        let this_param = Some (with_loc (fun env ->
+          Expect.token env T_THIS;
+          if Peek.token env <> T_COLON
+          then error env Error.ThisParamAnnotationRequired;
+          annotation env
+        ) env) in
+        (* Other params also omit the comma from their location *)
+        if Peek.token env = T_COMMA then Eat.token env;
+        this_param
+      end else None
+
+    in fun env ->
+      let this_param = this_param_annotation env in
+      param_list env this_param
 
   and function_param_list env =
     with_loc (fun env ->
@@ -299,7 +317,7 @@ module Type (Parse: Parser_common.PARSER) : TYPE = struct
           ParamList (function_param_list_without_parens env [])
       | T_RPAREN ->
           (* () or is definitely a param list *)
-          ParamList ({ Ast.Type.Function.Params.params = []; rest = None })
+          ParamList ({ Ast.Type.Function.Params.params = []; rest = None; this = None; })
       | T_IDENTIFIER _
       | T_STATIC (* `static` is reserved in strict mode, but still an identifier *) ->
           (* This could be a function parameter or a generic type *)
@@ -444,11 +462,15 @@ module Type (Parse: Parser_common.PARSER) : TYPE = struct
         let (key_loc, key) = key in
         let (_, { Type.Function.params; _ }) = value in
         begin match is_getter, params with
-        | true, (_, { Type.Function.Params.params = []; rest = None }) -> ()
+        | true, (_, { Type.Function.Params.this = Some _; _; }) ->
+          error_at env (key_loc, Error.GetterMayNotHaveThisParam)
+        | false, (_, { Type.Function.Params.this = Some _; _; }) ->
+          error_at env (key_loc, Error.SetterMayNotHaveThisParam)
+        | true, (_, { Type.Function.Params.params = []; rest = None; this = None; }) -> ()
         | false, (_, { Type.Function.Params.rest = Some _; _ }) ->
             (* rest params don't make sense on a setter *)
             error_at env (key_loc, Error.SetterArity)
-        | false, (_, { Type.Function.Params.params = [_]; _ }) -> ()
+        | false, (_, { Type.Function.Params.params = [_]; rest = None; this = None; }) -> ()
         | true, _ -> error_at env (key_loc, Error.GetterArity)
         | false, _ -> error_at env (key_loc, Error.SetterArity)
         end;

@@ -113,6 +113,10 @@ type t =
   | OptionalChainNew
   | OptionalChainTemplate
   | NullishCoalescingDisabled
+  | ThisParamAnnotationRequired
+  | ThisParamMustBeFirst
+  | GetterMayNotHaveThisParam
+  | SetterMayNotHaveThisParam
 
 exception Error of (Loc.t * t) list
 
@@ -288,4 +292,8 @@ module PP =
         use the nullish coalescing operator (`??`). Nullish coalescing is an active early-stage \
         feature proposal which may change and is not enabled by default. To enable support in \
         the parser, use the `esproposal_nullish_coalescing` option."
+      | ThisParamAnnotationRequired -> "A type annotation is required for the `this` parameter"
+      | ThisParamMustBeFirst -> "The `this` parameter must be the first function parameter"
+      | GetterMayNotHaveThisParam -> "A getter may not have a `this` parameter"
+      | SetterMayNotHaveThisParam -> "A setter may not have a `this` parameter"
   end

@@ -88,6 +88,7 @@ and Type : sig
       and ('M, 'T) t' = {
         params: ('M, 'T) Param.t list;
         rest: ('M, 'T) RestParam.t option;
+        this: ('M * ('M, 'T) Type.annotation) option;
       }
       [@@deriving show]
     end
@@ -221,6 +222,7 @@ and Type : sig
     | NumberLiteral of NumberLiteral.t
     | BooleanLiteral of bool
     | Exists
+    | This
 
   (* Type.annotation is a concrete syntax node with a location that starts at
    * the colon and ends after the type. For example, "var a: number", the
@@ -1268,6 +1270,7 @@ and Function : sig
   module Params : sig
     type ('M, 'T) t = 'M * ('M, 'T) t'
     and ('M, 'T) t' = {
+      this: ('M * ('M, 'T) Type.annotation) option;
       params: ('M, 'T) Pattern.t list;
       rest: ('M, 'T) RestElement.t option;
     }

@@ -1674,6 +1674,7 @@ let type_token env lexbuf =
   | "number" -> Token (env, T_NUMBER_TYPE)
   | "static" -> Token (env, T_STATIC)
   | "string" -> Token (env, T_STRING_TYPE)
+  | "this" -> Token (env, T_THIS)
   | "true" -> Token (env, T_TRUE)
   | "typeof" -> Token (env, T_TYPEOF)
   | "void" -> Token (env, T_VOID_TYPE)

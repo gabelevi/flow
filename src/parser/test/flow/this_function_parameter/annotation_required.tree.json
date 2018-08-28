@@ -1,0 +1,80 @@
+{
+  "errors":[
+    {
+      "loc":{"source":null,"start":{"line":2,"column":17},"end":{"line":2,"column":18}},
+      "message":"A type annotation is required for the `this` parameter"
+    },
+    {
+      "loc":{"source":null,"start":{"line":2,"column":17},"end":{"line":2,"column":18}},
+      "message":"Unexpected token )"
+    },
+    {
+      "loc":{"source":null,"start":{"line":3,"column":0},"end":{"line":3,"column":0}},
+      "message":"Rest parameter must be final parameter of an argument list"
+    },
+    {
+      "loc":{"source":null,"start":{"line":3,"column":0},"end":{"line":3,"column":0}},
+      "message":"Unexpected end of input"
+    }
+  ],
+  "type":"Program",
+  "loc":{"source":null,"start":{"line":2,"column":0},"end":{"line":3,"column":0}},
+  "range":[47,69],
+  "body":[
+    {
+      "type":"FunctionDeclaration",
+      "loc":{"source":null,"start":{"line":2,"column":0},"end":{"line":3,"column":0}},
+      "range":[47,69],
+      "id":{
+        "type":"Identifier",
+        "loc":{"source":null,"start":{"line":2,"column":9},"end":{"line":2,"column":12}},
+        "range":[56,59],
+        "name":"foo",
+        "typeAnnotation":null,
+        "optional":false
+      },
+      "params":[
+        {
+          "type":"ThisParameter",
+          "loc":{"source":null,"start":{"line":2,"column":13},"end":{"line":2,"column":21}},
+          "range":[60,68],
+          "typeAnnotation":{
+            "type":"TypeAnnotation",
+            "loc":{"source":null,"start":{"line":2,"column":17},"end":{"line":2,"column":21}},
+            "range":[64,68],
+            "typeAnnotation":{
+              "type":"ObjectTypeAnnotation",
+              "loc":{"source":null,"start":{"line":2,"column":19},"end":{"line":2,"column":21}},
+              "range":[66,68],
+              "exact":false,
+              "properties":[],
+              "indexers":[],
+              "callProperties":[],
+              "internalSlots":[]
+            }
+          }
+        }
+      ],
+      "body":{
+        "type":"BlockStatement",
+        "loc":{"source":null,"start":{"line":3,"column":0},"end":{"line":3,"column":0}},
+        "range":[69,69],
+        "body":[]
+      },
+      "async":false,
+      "generator":false,
+      "predicate":null,
+      "expression":false,
+      "returnType":null,
+      "typeParameters":null
+    }
+  ],
+  "comments":[
+    {
+      "type":"Line",
+      "loc":{"source":null,"start":{"line":1,"column":0},"end":{"line":1,"column":46}},
+      "range":[0,46],
+      "value":" Error - the annotation for this is required"
+    }
+  ]
+}
