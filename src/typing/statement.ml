@@ -6258,7 +6258,7 @@ and mk_func_sig =
       | patt ->
         add_param_with_default None patt
     in
-    let (params_loc, { Ast.Function.Params.params; rest }) = params in
+    let (params_loc, { Ast.Function.Params.params; rest; this=_ }) = params in
     let params, rev_param_asts =
       List.fold_left (fun (params, rev_param_asts) param ->
         let acc, param_ast = add_param param params in
@@ -6271,10 +6271,12 @@ and mk_func_sig =
       params, (params_loc, { Ast.Function.Params.
         params = List.rev rev_param_asts;
         rest = Some (rest_loc, { Ast.Function.RestElement.argument = rest });
+        this = None; (* TODO (glevi) - Support `this` *)
       })
     | None -> params, (params_loc, { Ast.Function.Params.
         params = List.rev rev_param_asts;
         rest = None;
+        this = None; (* TODO (glevi) - Support `this` *)
       })
   in
 
@@ -6387,7 +6389,11 @@ and declare_function_to_function_declaration cx
   | Some (loc, Ast.Type.Predicate.Declared e) -> begin
       match annot with
       | (annot_loc, (func_annot_loc, Ast.Type.Function
-        { Ast.Type.Function.params = (params_loc, { Ast.Type.Function.Params.params; rest });
+        { Ast.Type.Function.params = (params_loc, {
+            Ast.Type.Function.Params.params;
+            rest;
+            this=_;
+          });
           Ast.Type.Function.return;
           Ast.Type.Function.tparams;
         })) ->
@@ -6424,7 +6430,11 @@ and declare_function_to_function_declaration cx
           let return = Some (loc, return) in
           Some (Ast.Statement.FunctionDeclaration { Ast.Function.
             id = Some id;
-            params = (params_loc, { Ast.Function.Params.params; rest });
+            params = (params_loc, {
+              Ast.Function.Params.params;
+              rest;
+              this = None; (* TODO (glevi) - Support `this` *)
+            });
             body;
             async = false;
             generator = false;
@@ -6436,7 +6446,11 @@ and declare_function_to_function_declaration cx
           | _, Ast.Statement.FunctionDeclaration { Ast.Function.
               id = Some ((id_loc, fun_type), id_name);
               tparams;
-              params = params_loc, { Ast.Function.Params.params; rest };
+              params = params_loc, {
+                Ast.Function.Params.params;
+                rest;
+                this = None; (* TODO (glevi) - Support `this` *)
+              };
               return = Some (_, return);
               body = Ast.Function.BodyBlock (pred_loc, { Ast.Statement.Block.
                 body = [_, Ast.Statement.Return { Ast.Statement.Return.
@@ -6464,7 +6478,11 @@ and declare_function_to_function_declaration cx
                 annot_loc, (
                   (func_annot_loc, fun_type),
                   Ast.Type.Function { Ast.Type.Function.
-                    params = params_loc, { Ast.Type.Function.Params.params; rest; };
+                    params = params_loc, {
+                      Ast.Type.Function.Params.params;
+                      rest;
+                      this = None; (* TODO (glevi) - Support `this` *)
+                    };
                     return;
                     tparams;
                   }

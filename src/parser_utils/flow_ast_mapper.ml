@@ -518,19 +518,33 @@ class mapper = object(this)
   method function_type _loc (ft: (Loc.t, Loc.t) Flow_ast.Type.Function.t) =
     let open Flow_ast.Type.Function in
     let {
-      params = (params_loc, { Params.params = ps; rest = rpo });
+      params = (params_loc, {
+        Params.params = ps;
+        rest = rpo;
+        this = this_param;
+      });
       return;
       tparams;
     } = ft in
     let ps' = ListUtils.ident_map this#function_param_type ps in
     let rpo' = map_opt this#function_rest_param_type rpo in
+    let this_param' = map_opt this#this_annotation this_param in
     let return' = this#type_ return in
-    if ps' == ps && rpo' == rpo && return' == return then ft
+    if ps' == ps && rpo' == rpo && this_param' == this_param && return' == return then ft
     else {
-      params = (params_loc, { Params.params = ps'; rest = rpo' });
+      params = (params_loc, {
+        Params.params = ps';
+        rest = rpo';
+        this = this_param';
+      });
       return = return';
       tparams
     }
+
+  method this_annotation (this_param: (Loc.t * (Loc.t, Loc.t) Flow_ast.Type.annotation)) =
+    let (loc, annotation) = this_param in
+    let annotation' = this#type_annotation annotation in
+    if annotation == annotation' then this_param else (loc, annotation')
 
   method label_identifier (ident: Loc.t Flow_ast.Identifier.t) =
     this#identifier ident
@@ -634,6 +648,7 @@ class mapper = object(this)
     | _, NumberLiteral _
     | _, BooleanLiteral _
     | _, Exists
+    | _, This
       -> t
     | loc, Nullable t' -> id this#type_ t' t (fun t' -> loc, Nullable t')
     | loc, Array t' -> id this#type_ t' t (fun t' -> loc, Array t')
