@@ -424,6 +424,114 @@ export default suite(
           ),
       ],
     ).flowConfig('_flowconfig_all_set_to_true'),
+    test('live non-parse diagnostics ignores ignored file', [
+      lspStartAndConnect(),
+      // Open an ignored document with errors. We should not get errors
+      lspNotification('textDocument/didOpen', {
+        textDocument: {
+          uri: '<PLACEHOLDER_PROJECT_URL>/ignoreme.js',
+          languageId: 'javascript',
+          version: 1,
+          text: `// @flow
+          let x: string = 123;
+          `,
+        },
+      })
+        .sleep(1000)
+        .verifyAllLSPMessagesInStep([], [...lspIgnoreStatusAndCancellation]),
+      // Modified an ignored document with errors. We should not get errors
+      lspNotification('textDocument/didChange', {
+        textDocument: {
+          uri: '<PLACEHOLDER_PROJECT_URL>/ignoreme.js',
+          version: 2,
+        },
+        contentChanges: [
+          {
+            text: `// @flow
+          let x: boolean = 123;
+          `,
+          },
+        ],
+      })
+        .sleep(1000)
+        .verifyAllLSPMessagesInStep([], [...lspIgnoreStatusAndCancellation]),
+    ]).flowConfig('_flowconfig_with_ignores'),
+    test('live non-parse diagnostics ignores non-flow files', [
+      lspStartAndConnect(),
+      // Open a document with the wrong extension
+      lspNotification('textDocument/didOpen', {
+        textDocument: {
+          uri: '<PLACEHOLDER_PROJECT_URL>/foo.php',
+          languageId: 'javascript',
+          version: 1,
+          text: `// @flow
+          let x: string = 123;
+          `,
+        },
+      })
+        .sleep(1000)
+        .verifyAllLSPMessagesInStep([], [...lspIgnoreStatusAndCancellation]),
+      addFile('witherrors1.js', 'directory.js/with_errors.js.ignored')
+        .sleep(1000)
+        .verifyAllLSPMessagesInStep([], [...lspIgnoreStatusAndCancellation]),
+      // Open a "document" which actually is a directory
+      lspNotification('textDocument/didOpen', {
+        textDocument: {
+          uri: '<PLACEHOLDER_PROJECT_URL>/directory.js',
+          languageId: 'javascript',
+          version: 1,
+          text: `// @flow
+          let x: string = 123;
+          `,
+        },
+      })
+        .sleep(1000)
+        .verifyAllLSPMessagesInStep([], [...lspIgnoreStatusAndCancellation]),
+    ]),
+    test('live non-parse diagnostics resent after recheck', [
+      addFile('export_number.js', 'importme.js'),
+      lspStartAndConnect(),
+      // Open a document with the wrong extension
+      lspNotification('textDocument/didOpen', {
+        textDocument: {
+          uri: '<PLACEHOLDER_PROJECT_URL>/foo.js',
+          languageId: 'javascript',
+          version: 1,
+          text: `// @flow
+          import value from './importme';
+          (value: boolean); // This will error
+          `,
+        },
+      })
+        .waitUntilLSPMessage(
+          9000,
+          'textDocument/publishDiagnostics{Cannot cast `value` to boolean because  number [1] is incompatible with  boolean [2].}',
+        )
+        .verifyAllLSPMessagesInStep(
+          [
+            'textDocument/publishDiagnostics{Cannot cast `value` to boolean because  number [1] is incompatible with  boolean [2].}',
+          ],
+          [
+            'textDocument/publishDiagnostics',
+            ...lspIgnoreStatusAndCancellation,
+          ],
+        ),
+      // Changing importme.js will trigger a recheck, which will resend the live non-parse errors
+      addFile('export_string.js', 'importme.js')
+        .waitUntilLSPMessage(
+          9000,
+          'textDocument/publishDiagnostics{Cannot cast `value` to boolean because  string [1] is incompatible with  boolean [2].}',
+        )
+        .verifyAllLSPMessagesInStep(
+          [
+            'textDocument/publishDiagnostics{Cannot cast `value` to boolean because  string [1] is incompatible with  boolean [2].}',
+          ],
+          [
+            'textDocument/publishDiagnostics',
+            ...lspIgnoreStatusAndCancellation,
+          ],
+        ),
+    ]),
     test('pseudo parse errors', [
       lspStartAndConnect(),
       addFile('pseudo_parse_error.js')

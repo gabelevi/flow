@@ -1585,6 +1585,49 @@ let handle_persistent_unsupported ?id ~unhandled ~metadata ~client:_ ~profiling:
   let reason = Printf.sprintf "not implemented: %s" (Lsp_fmt.message_name_to_string unhandled) in
   mk_lsp_error_response ~ret:() ~id ~reason metadata
 
+(* This tries to simulate the logic from elsewhere which determines whether we would report
+ * errors for a given file. The criteria are
+ *
+ * 1) The file must be either implicitly included (be in the same dir structure as .flowconfig)
+ *    or explicitly included
+ * 2) The file must not be ignored
+ * 3) The file path must be a Flow file (e.g foo.js and not foo.php or foo/)
+ * 4) The file must either have `// @flow` or all=true must be set in the .flowconfig or CLI
+ *)
+let we_care_about_this_file ~options ~env ~file_path ~content =
+  let file_options = Options.file_options options in
+  (* Process the flowconfig settings to see if this file is implicitly or explicitly
+   * included and is not ignored *)
+  let is_file_included =
+    lazy
+      (let is_not_ignored =
+         lazy (Files.wanted ~options:file_options env.ServerEnv.libs file_path)
+       in
+       let is_implicitly_included =
+         lazy
+           (let root_str = spf "%s%s" (Path.to_string (Options.root options)) Filename.dir_sep in
+            String_utils.string_starts_with file_path root_str)
+       in
+       let is_explicitly_included = lazy (Files.is_included file_options file_path) in
+       Lazy.(
+         force is_not_ignored && (force is_implicitly_included || force is_explicitly_included)))
+  in
+  (* Check the file extension and the docblock for @flow *)
+  let file_is_flow =
+    lazy
+      (let is_flow_file = Files.is_flow_file ~options:file_options file_path in
+       let has_flow_pragma =
+         lazy
+           (let (_, docblock) =
+              Parsing_service_js.(
+                parse_docblock docblock_max_tokens (File_key.SourceFile file_path) content)
+            in
+            Docblock.is_flow docblock)
+       in
+       is_flow_file && (Options.all options || Lazy.force has_flow_pragma))
+  in
+  Lazy.force is_file_included && Lazy.force file_is_flow
+
 (* What should we do if we get multiple requests for the same URI? Each request wants the most
  * up-to-date live errors, so if we have 10 pending requests then we would want to send the same
  * response to each. And we could do that, but it might have some weird side effects:
@@ -1642,20 +1685,19 @@ let handle_live_errors_request =
                 metadata )
           | File_input.FileContent (_, content) ->
             let%lwt (live_errors, live_warnings) =
-              let file = File_key.SourceFile file_path in
-              if
-                Options.all options
-                ||
-                let (_, docblock) =
-                  Parsing_service_js.(parse_docblock docblock_max_tokens file content)
-                in
-                Docblock.is_flow docblock
-              then
+              if we_care_about_this_file ~options ~env ~file_path ~content then
                 let%lwt (_, live_errors, live_warnings) =
-                  Types_js.typecheck_contents ~options ~env ~profiling content file
+                  Types_js.typecheck_contents
+                    ~options
+                    ~env
+                    ~profiling
+                    content
+                    (File_key.SourceFile file_path)
                 in
                 Lwt.return (live_errors, live_warnings)
               else
+                (* If the LSP requests errors for a file for which we wouldn't normally emit errors
+                 * then just return empty sets *)
                 Lwt.return
                   ( Errors.ConcreteLocPrintableErrorSet.empty,
                     Errors.ConcreteLocPrintableErrorSet.empty )
